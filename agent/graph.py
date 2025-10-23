@@ -196,10 +196,10 @@ def create_graph():
     # Determine which LLM provider to use based on available env vars
     if os.getenv("OPENAI_API_KEY"):
         model_provider = "openai"
-        model_name = "gpt-4"
+        model_name = "gpt-4o"
     elif os.getenv("ANTHROPIC_API_KEY"):
         model_provider = "anthropic"
-        model_name = "claude-3-5-sonnet-20241022"
+        model_name = "claude-sonnet-4-20250514"  # Claude Sonnet 4
     else:
         raise ValueError("Please set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env file")
 
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     elif os.getenv("ANTHROPIC_API_KEY"):
         agent = TransportationAgent(
             model_provider="anthropic",
-            model_name="claude-4-5-sonnet"
+            model_name="claude-sonnet-4-5-20250929"
         )
     else:
         print("Please set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env file")
