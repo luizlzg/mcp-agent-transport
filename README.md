@@ -9,6 +9,7 @@ A production-ready LangGraph-based ReAct agent that finds the cheapest and faste
 
 ## Quick Links
 
+- **[Chat UI Setup](CHAT_UI_SETUP.md)** - Web-based chat interface (NEW!)
 - **[Quick Start (5 min)](QUICKSTART.md)** - Get running in 5 minutes
 - **[Setup Guide](SETUP_GUIDE.md)** - Detailed installation and configuration
 - **[API Documentation](API_DOCUMENTATION.md)** - API keys, pricing, and usage
@@ -22,10 +23,10 @@ A production-ready LangGraph-based ReAct agent that finds the cheapest and faste
   - ✈️ Flights: Amadeus API (270+ airlines worldwide)
   - 🚂 Trains: SNCF API (French railways + international)
   - 🚌 Buses: FlixBus API (2,500+ destinations)
-- **Interactive Chat Interface**: Natural language queries with clarifying questions
+- **Web Chat UI**: Modern browser-based interface powered by LangChain Agent Chat UI
+- **CLI Interface**: Rich terminal interface with markdown support
 - **Filesystem Integration**: Save and load itineraries via MCP
 - **ReAct Architecture**: Intelligent reasoning and acting loop
-- **Beautiful CLI**: Rich terminal interface with markdown support
 
 ## Tech Stack
 

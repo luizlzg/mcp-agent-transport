@@ -183,6 +183,31 @@ class TransportationAgent:
                     yield last_message.content
 
 
+def create_graph():
+    """
+    Factory function to create the compiled graph for LangGraph API.
+
+    This function is called by the LangGraph API server to instantiate
+    the agent graph. It returns a compiled StateGraph.
+
+    Environment variables are loaded by LangGraph API from the .env file
+    specified in langgraph.json, so no need to call load_dotenv() here.
+    """
+    # Determine which LLM provider to use based on available env vars
+    if os.getenv("OPENAI_API_KEY"):
+        model_provider = "openai"
+        model_name = "gpt-4"
+    elif os.getenv("ANTHROPIC_API_KEY"):
+        model_provider = "anthropic"
+        model_name = "claude-3-5-sonnet-20241022"
+    else:
+        raise ValueError("Please set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env file")
+
+    # Create and return the agent's compiled graph
+    agent = TransportationAgent(model_provider=model_provider, model_name=model_name)
+    return agent.graph
+
+
 # Example usage
 if __name__ == "__main__":
     import os
