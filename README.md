@@ -38,20 +38,37 @@ A production-ready LangGraph-based ReAct agent that finds the cheapest and faste
 - **Real APIs** - Amadeus, SNCF, FlixBus with live data
 - **Python 3.10+** - Required by LangChain 1.0
 
-## Quick Start (2 minutes)
+## How to Run
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+### Interactive CLI
 
-# 2. Create .env file with your OpenAI key
-echo "OPENAI_API_KEY=sk-your-key-here" > .env
+1.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-# 3. Run the agent
-python main.py
-```
+2.  **Set up environment variables:**
+    -   Copy `.env.example` to `.env`
+    -   Add your API keys (OpenAI/Anthropic, Amadeus, SNCF, RapidAPI)
 
-That's it! See [QUICKSTART.md](QUICKSTART.md) for detailed setup with all APIs.
+3.  **Run the agent:**
+    ```bash
+    python main.py
+    ```
+
+### Web Interface
+
+1.  **Ensure all dependencies are installed:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+2.  **Run the web server:**
+    ```bash
+    uvicorn server:app --reload
+    ```
+
+3.  **Open your browser** and navigate to `http://127.0.0.1:8000`.
 
 ## Example Conversation
 

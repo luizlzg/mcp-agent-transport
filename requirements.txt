@@ -24,3 +24,7 @@ python-dateutil>=2.8.2
 # CLI and user interaction
 rich>=13.0.0
 prompt-toolkit>=3.0.0
+
+# Web server
+fastapi>=0.100.0
+uvicorn>=0.22.0
