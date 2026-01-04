@@ -132,7 +132,28 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
         structured_output = state.get("structured_response")
         if not structured_output:
             LOGGER.warning("No structured_response found in state")
-            return state
+
+            # Get messages from state
+            messages = state.get("messages", [])
+
+            # Create error feedback message asking the agent to generate structured output
+            error_feedback_message = f"""
+ATTENTION: You did not provide a structured output response.
+
+You MUST return the data in the correct structured format with ALL required fields: {list(self.expected_schema.__annotations__.keys())}
+
+Please generate the structured output now based on the research you already did.
+
+IMPORTANT: Return the complete and correctly filled structure.
+"""
+
+            # Raise error with messages - agent definition will handle retry
+            raise StructuredOutputValidationError(
+                "No structured_response found in state",
+                error_feedback_message,
+                messages,
+                state
+            )
 
         # Validate the output
         is_valid, error_message = self.validator_func(structured_output)
@@ -254,6 +275,12 @@ def validate_day_research_result(output: Dict[str, Any]) -> tuple[bool, str]:
         # Check name is not empty
         if not attraction["name"]:
             return False, f"Attraction at index {idx} 'name' cannot be empty"
+        
+        # Check images is not empty - MUST search images for all attractions                 
+        images = attraction.get("images", [])
+        if not images:
+            attraction_name = attraction.get("name", f"at index {idx}")
+            return False, f"Attraction '{attraction_name}' has no images. You MUST search images for ALL attractions using search_attraction_images tool. Search for images of '{attraction_name}' now."   
 
     return True, ""
 
