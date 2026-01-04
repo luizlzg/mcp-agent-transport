@@ -9,16 +9,32 @@ A multi-agent LangGraph system that transforms a list of tourist attractions int
 
 ## Features
 
-- **Intelligent Day Organization**: K-means clustering groups attractions by geographic proximity
+### Day Organization
+- **Intelligent Clustering**: K-means groups attractions by geographic proximity
 - **Constrained Clustering**: Set min/max attractions per day while keeping the number of days fixed
 - **User Approval Flow**: Review and adjust K-means organized itineraries before proceeding
-- **Address-Based Geocoding**: Searches for official addresses before geocoding to ensure accuracy
-- **Multilingual Output**: Preserves attraction names in user's original language on maps and documents
 - **User Preference Handling**: Supports isolated days, specific day assignments, or flexible grouping
+
+### Research & Content
 - **Parallel Research**: Multiple agent instances research attractions concurrently
-- **Rich Attraction Details**: Descriptions, opening hours, costs, ticket links, and images
+- **Rich Descriptions**: 150-300 word detailed descriptions with history, curiosities, and insider tips
+- **Official Ticket Links**: Only links from official websites (never TripAdvisor, Viator, etc.)
+- **Compound Attraction Support**: Multi-location entries with per-attraction pricing
+
+### Image Quality
+- **Watermark Filtering**: Automatically excludes images from 35+ stock photo domains (Shutterstock, Getty, Alamy, etc.)
+- **Resolution Filtering**: Discards low-resolution images (minimum 250,000 pixels area)
+- **Curated Selection**: Searches 3x more images than needed to ensure quality after filtering
+
+### Document Generation
 - **Professional DOCX Output**: Styled documents with visual route maps
-- **Multi-Language Support**: English, Portuguese (BR), Spanish, French
+- **Clean Titles**: Agent generates polished attraction titles (not raw user input)
+- **Multi-Language Support**: English, Portuguese (BR), Spanish, French with strict consistency
+- **Cost Summary**: Grouped by currency with per-person estimates
+
+### Other
+- **Address-Based Geocoding**: Google Places search for accurate coordinates
+- **Multilingual Maps**: Preserves clean attraction titles on route maps
 - **Email Delivery**: Send generated itineraries via SMTP
 
 ## Architecture
@@ -47,8 +63,10 @@ User Input (attractions list)
          │
          ▼
 ┌─────────────────────────────┐
-│  Document Builder           │  Generates DOCX with maps, images,
-│                             │  and cost summaries
+│  Document Builder           │  - Filters watermarked images
+│                             │  - Filters low-resolution images
+│                             │  - Generates DOCX with maps
+│                             │  - Maps use clean titles
 └─────────────────────────────┘
          │
          ▼
@@ -58,11 +76,12 @@ User Input (attractions list)
 ## Tech Stack
 
 - **LangChain 1.0** / **LangGraph** - Agent orchestration with TypedDict state schemas
-- **Claude Sonnet 4.5** (Anthropic) or **GPT-4** (OpenAI) - LLM providers
-- **Tavily MCP** - Web search and image retrieval
+- **OpenRouter** - Access to multiple LLM providers (Claude, GPT-4, Gemini, Grok, Llama, etc.)
+- **Serper** - Google Places for address search
+- **Tavily** - Web search and image retrieval
 - **GeoPy** - Geocoding via Nominatim
 - **scikit-learn** / **k-means-constrained** - K-means clustering with size constraints
-- **GeoPandas / Matplotlib** - Route map visualization
+- **GeoPandas** / **Matplotlib** - Route map visualization
 - **python-docx** - Document generation
 
 ## Quick Start
@@ -86,16 +105,18 @@ python main.py
 Create a `.env` file with the following:
 
 ```bash
-# LLM Provider (required - choose one)
-ANTHROPIC_API_KEY=sk-ant-...
-# or
-OPENAI_API_KEY=sk-...
+# OpenRouter API (required) - https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-...
 
-# Model settings
-MODEL_PROVIDER=anthropic          # or "openai"
-MODEL_NAME=claude-sonnet-4-5-20250929  # or "gpt-4o"
+# Model name in OpenRouter format (provider/model)
+# Browse models at: https://openrouter.ai/models
+MODEL_NAME=anthropic/claude-sonnet-4-20250514
+# Other examples: openai/gpt-4o, google/gemini-pro-1.5, x-ai/grok-3
 
-# Web Search (required for attraction research)
+# Serper API (required for place address search) - https://serper.dev
+SERPER_API_KEY=...
+
+# Tavily API (required for web search and images) - https://tavily.com
 TAVILY_API_KEY=tvly-...
 
 # Email delivery (optional)
@@ -192,7 +213,15 @@ The system preserves attraction names in your language:
 1. **Input**: You provide names in your language (e.g., "Torre Eiffel", "Museu do Louvre")
 2. **Geocoding**: Agent finds English addresses for accurate coordinates
 3. **Storage**: Your original names are used as keys
-4. **Output**: Maps and documents display names in your language
+4. **Output**: Maps and documents display clean titles in your language
+
+### Strict Language Consistency
+
+The researcher agent enforces strict language rules:
+- ALL content (descriptions, captions, ticket info) must be in the selected language
+- No mixing languages (e.g., "A view incrível" is invalid)
+- Proper nouns (attraction names, street names) stay in original form
+- Even when researching from English sources, content is translated
 
 Example mapping:
 ```python
@@ -201,6 +230,25 @@ Example mapping:
     "Museu do Louvre": "Louvre Museum, Rue de Rivoli, Paris, France"
 }
 ```
+
+## Image Quality Filtering
+
+The system applies two layers of image filtering to ensure high-quality documents:
+
+### 1. Watermark Domain Filtering
+Images from 35+ stock photo sites are automatically excluded:
+- Shutterstock, Getty Images, iStock
+- Alamy (including CDN subdomains like c7.alamy.com, c8.alamy.com)
+- Adobe Stock, Dreamstime, 123RF, Depositphotos
+- And many more...
+
+### 2. Resolution Filtering
+Low-resolution images are discarded during document generation:
+- Minimum area: 250,000 pixels (equivalent to 500×500)
+- Allows various aspect ratios (panoramic, portrait, square)
+- Filtering happens after download, no extra API calls
+
+To compensate for filtered images, the system searches 3x more images than needed.
 
 ## Project Structure
 
@@ -239,46 +287,60 @@ itinerary-generator/
 
 ## Available Tools
 
+### Day Organizer Agent
+
 | Tool | Purpose |
 |------|---------|
-| `search_attraction_info` | Web search for addresses and information |
-| `extract_coordinates` | Geocode attractions (name→address mapping) |
+| `search_place_address` | Google Places search + auto-store coordinates (Serper) |
 | `organize_attractions_by_days` | K-means clustering with constraints |
 | `request_itinerary_approval` | Pause for user review (uses LangGraph interrupt) |
 | `update_itinerary_organization` | Apply user's requested changes |
 | `return_invalid_input_error` | Handle invalid/unrelated input |
 
+### Attraction Researcher Agent
+
+| Tool | Purpose |
+|------|---------|
+| `search_attraction_info` | Web search for details, hours, tickets (Tavily) |
+| `search_attraction_images` | Image search with watermark filtering (Tavily) |
+
 ## Output Example
 
 The generated DOCX includes:
 
-- **Cover page** with itinerary title and dates
+- **Cover page** with itinerary title
 - **Day-by-day sections** with:
-  - Attraction descriptions and tips
+  - Clean, polished attraction titles (e.g., "Eiffel Tower & Trocadero" instead of "eiffel tower and surroundings (enter, trocadero)")
+  - Rich descriptions (150-300 words) with history, curiosities, and insider tips
   - Opening hours and addresses
-  - Embedded images with captions
-  - Ticket purchase links
+  - High-quality images only (watermarked and low-resolution images filtered out)
+  - Image captions describing what each photo shows
+  - Ticket info with per-attraction pricing for compound attractions
+  - Official ticket purchase links (never third-party booking sites)
   - Estimated costs per person
-- **Visual route map** with color-coded day markers (names in your language)
+- **Visual route map** with color-coded day markers using clean titles
 - **Cost summary** grouped by currency
 
 ## API Requirements
 
 | Service | Purpose | Free Tier |
 |---------|---------|-----------|
-| Anthropic/OpenAI | LLM reasoning | Pay per token |
+| OpenRouter | LLM access (Claude, GPT-4, Gemini, etc.) | Pay per token |
+| Serper | Google Places (address search) | 2,500 searches to start |
 | Tavily | Web search + images | 1,000 searches/month |
 
 ## Geocoding Accuracy
 
-The agent searches for official addresses before geocoding to ensure accurate coordinates:
+The agent uses Google Places (via Serper) to get accurate coordinates directly:
 
-1. **Search**: Queries "[attraction] [city] [country] official address"
-2. **Map**: Creates `{original_name: english_address}` dict
-3. **Geocode**: Uses full address like "Colosseum, Piazza del Colosseo, Rome, Italy"
-4. **Store**: Coordinates are saved with original name as key
+1. **Search**: `search_place_address(original_name="Coliseu", query="Colosseum Rome Italy")`
+2. **Auto-Store**: Coordinates from Google Places are stored automatically in state
+3. **Preserve Language**: User's original name is used as the key
 
-This prevents errors with attractions that have namesakes in other cities and preserves your language in outputs.
+This approach:
+- Gets coordinates directly from Google Places (no separate geocoding step)
+- Prevents errors with attractions that have namesakes in other cities
+- Preserves your language in map labels and outputs
 
 ## Troubleshooting
 

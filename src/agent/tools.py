@@ -1,28 +1,63 @@
 """Tools for the multi-agent itinerary generation graph."""
+import os
 import json
 from langchain.tools import tool, ToolRuntime
 from langchain.messages import ToolMessage
 from langgraph.types import Command, interrupt
 from src.mcp_client.tavily_client import TavilyMCPClient
 from src.utils.logger import LOGGER
-from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from sklearn.cluster import KMeans
 from k_means_constrained import KMeansConstrained
 import numpy as np
 
 
+# Stock photo sites that use watermarks - exclude from search
+WATERMARK_DOMAINS = [
+    # Shutterstock and variants
+    "shutterstock.com",
+    "image.shutterstock.com",
+    # Getty Images and variants
+    "gettyimages.com",
+    "media.gettyimages.com",
+    # iStock
+    "istockphoto.com",
+    "media.istockphoto.com",
+    # Alamy and CDN subdomains
+    "alamy.com",
+    "c7.alamy.com",
+    "c8.alamy.com",
+    "l450v.alamy.com",
+    # Dreamstime
+    "dreamstime.com",
+    "thumbs.dreamstime.com",
+    # 123RF
+    "123rf.com",
+    "previews.123rf.com",
+    # Adobe Stock
+    "stock.adobe.com",
+    "t3.ftcdn.net",
+    "t4.ftcdn.net",
+    # Depositphotos
+    "depositphotos.com",
+    "st.depositphotos.com",
+    "st2.depositphotos.com",
+    "st3.depositphotos.com",
+    # Others
+    "bigstockphoto.com",
+    "pond5.com",
+    "vectorstock.com",
+    "canstockphoto.com",
+    "fotolia.com",
+    "stocksy.com",
+    "agefotostock.com",
+    "superstock.com",
+    "photoshelter.com",
+]
+
+
 # Global clients (initialized on first use)
 _tavily_client = None
-_geolocator = None
-
-
-def get_geolocator():
-    """Get or create geolocator for distance calculations."""
-    global _geolocator
-    if _geolocator is None:
-        _geolocator = Nominatim(user_agent="itinerary_generator")
-    return _geolocator
 
 
 def get_tavily_client():
@@ -37,13 +72,22 @@ def get_tavily_client():
     return _tavily_client
 
 
+def _is_watermark_domain(url: str) -> bool:
+    """Check if URL is from a known watermark/stock photo domain."""
+    url_lower = url.lower()
+    for domain in WATERMARK_DOMAINS:
+        if domain in url_lower:
+            return True
+    return False
+
+
 @tool
 def search_attraction_info(
     query: str,
 ) -> str:
     """
     Web search tool to find information about attractions.
-    Use this tool when you need to search for information online.
+    Use this tool when you need to search for general information online.
 
     Args:
         query: Search query
@@ -65,7 +109,14 @@ def search_attraction_info(
         )
 
         tool_output = search_results.get("results", [])
-        tool_output = [{"url": res["url"], "title": res["title"], "content": res.get("content", "")} for res in tool_output]
+        tool_output = [
+            {
+                "url": res.get("url", ""),
+                "title": res.get("title", ""),
+                "content": res.get("content", res.get("raw_content", ""))
+            }
+            for res in tool_output
+        ]
 
         return json.dumps(tool_output, ensure_ascii=False, indent=2)
 
@@ -78,14 +129,17 @@ def search_attraction_info(
 @tool
 def search_attraction_images(
     query: str,
-    count: int = 5
+    count: int = 10
 ) -> str:
     """
     Search for high-quality images of a tourist attraction using Tavily.
 
+    Makes multiple searches with query variations to get more images,
+    since Tavily typically returns only 5-10 images per search.
+
     Args:
         query: Search query (attraction name, city, etc.)
-        count: Number of images to fetch (default: 5)
+        count: Number of images to fetch (default: 10)
 
     Returns:
         JSON string with image URLs found
@@ -97,25 +151,48 @@ def search_attraction_images(
         }, ensure_ascii=False)
 
     try:
-        search_data = client.search(
+        # Multiple query variations to get more images (Tavily returns ~5 per search)
+        query_variations = [
             query,
-            max_results=count,
-            search_depth="advanced",
-            include_images=True,
-            include_image_descriptions=True
-        )
+            f"{query} photos",
+            f"{query} landmark tourist attraction",
+        ]
 
-        images = search_data.get("images", [])
+        all_images = []
+        seen_urls = set()
+
+        for q in query_variations:
+            search_data = client.search(
+                q,
+                max_results=5,
+                search_depth="advanced",
+                include_images=True,
+                include_image_descriptions=True,
+                exclude_domains=WATERMARK_DOMAINS,
+            )
+
+            images = search_data.get("images", [])
+
+            # Filter and deduplicate
+            for img in images:
+                url = img.get("url", "")
+                if url and url not in seen_urls and not _is_watermark_domain(url):
+                    seen_urls.add(url)
+                    all_images.append(img)
+
+            # Stop if we have enough images
+            if len(all_images) >= count:
+                break
 
         result = {
-            "images_found": len(images),
+            "images_found": len(all_images),
             "images": []
         }
 
-        for img_object in images[:count]:
+        for img_object in all_images[:count]:
             result["images"].append({
-                "url_regular": img_object["url"],
-                "description": img_object["description"],
+                "url_regular": img_object.get("url", ""),
+                "description": img_object.get("description", ""),
             })
 
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -127,79 +204,133 @@ def search_attraction_images(
 
 
 @tool
-def extract_coordinates(
-    attractions: dict[str, str],
+def search_place_address(
+    original_name: str,
+    query: str,
     runtime: ToolRuntime,
 ) -> Command:
     """
-    Extract geographic coordinates for attractions using Nominatim.
+    Search for the official address of a place using Google Places and store coordinates.
 
-    IMPORTANT: This tool updates the graph state with the obtained coordinates.
-    The ADDRESS (value) is used for geocoding, but the ORIGINAL NAME (key) is stored.
-    This ensures the final output uses the user's original names in their language.
+    This tool searches for attractions and AUTOMATICALLY stores the coordinates in state.
+    The coordinates are stored with the original_name as key, preserving the user's language.
+
+    IMPORTANT: Always search in ENGLISH for best results.
 
     Args:
-        attractions: Dict mapping original attraction names to their full addresses for geocoding.
-                     Key = Original name as user wrote it (without parentheses, cleaned)
-                     Value = Full address for geocoding (city, country, street if available)
-                     Example: {
-                         "Torre Eiffel": "Eiffel Tower, Champ de Mars, Paris, France",
-                         "Museu do Louvre": "Louvre Museum, Rue de Rivoli, Paris, France"
-                     }
+        original_name: The attraction name as the user wrote it (in their language).
+                       This will be used as the key when storing coordinates.
+                       Example: "Torre Eiffel", "Museu do Louvre", "Coliseu"
+        query: Place name to search in ENGLISH. Include city/country for accuracy.
+               Example: "Eiffel Tower Paris France", "Louvre Museum Paris", "Colosseum Rome Italy"
 
     Returns:
-        Command object that updates state with coordinates and returns success/failure info
+        Command that updates state with coordinates and returns place info
     """
-    geolocator = get_geolocator()
+    serper_api_key = os.getenv("SERPER_API_KEY")
+    if not serper_api_key:
+        return Command(update={"messages": [ToolMessage(
+            tool_call_id=runtime.tool_call_id,
+            content=json.dumps({
+                "error": "SERPER_API_KEY not configured. Set it in .env file for place search.",
+                "original_name": original_name,
+                "found": False
+            }, ensure_ascii=False, indent=2)
+        )]})
 
-    # Get current state
-    current_coordinates = runtime.state.get("attraction_coordinates", {})
+    try:
+        from langchain_community.utilities import GoogleSerperAPIWrapper
 
-    # Process new coordinates
-    new_coordinates = {}
-    failures = []
+        search = GoogleSerperAPIWrapper(
+            serper_api_key=serper_api_key,
+            type="places",
+            k=3
+        )
 
-    for original_name, address in attractions.items():
-        try:
-            LOGGER.info(f"Geocoding '{original_name}' using address: {address}")
-            location = geolocator.geocode(address, timeout=10)
+        LOGGER.info(f"Serper Places search: '{query}' for attraction '{original_name}'")
+        raw_results = search.results(query)
 
-            if location:
-                # Store with original name as key, but geocode using address
-                new_coordinates[original_name] = {
-                    "lat": location.latitude,
-                    "lon": location.longitude
-                }
-                LOGGER.info(f"✓ Success: {original_name} -> ({location.latitude}, {location.longitude})")
-            else:
-                failures.append({"name": original_name, "address": address})
-                LOGGER.warning(f"✗ Failed: Could not find coordinates for '{original_name}' (address: {address})")
+        # Extract places from results
+        places = raw_results.get("places", [])
 
-        except Exception as e:
-            failures.append({"name": original_name, "address": address})
-            LOGGER.error(f"✗ Error geocoding '{original_name}': {e}")
+        if not places:
+            LOGGER.warning(f"No places found for: {query}")
+            return Command(update={
+                "failed_coordinate_lookups": [original_name],  # Track the failure
+                "messages": [ToolMessage(
+                    tool_call_id=runtime.tool_call_id,
+                    content=json.dumps({
+                        "original_name": original_name,
+                        "query": query,
+                        "found": False,
+                        "message": "No places found. Try a different search query."
+                    }, ensure_ascii=False, indent=2)
+                )]
+            })
 
-    # Merge new data with existing
-    attraction_coordinates = {**current_coordinates, **new_coordinates}
+        # Use the first (best) result
+        best_place = places[0]
+        latitude = best_place.get("latitude")
+        longitude = best_place.get("longitude")
 
-    # Check if all coordinates are obtained (no failures)
-    all_coordinates_obtained = len(failures) == 0
+        if latitude is None or longitude is None:
+            LOGGER.warning(f"No coordinates in place result for: {query}")
+            return Command(update={
+                "failed_coordinate_lookups": [original_name],  # Track the failure
+                "messages": [ToolMessage(
+                    tool_call_id=runtime.tool_call_id,
+                    content=json.dumps({
+                        "original_name": original_name,
+                        "query": query,
+                        "found": False,
+                        "message": "Place found but no coordinates available."
+                    }, ensure_ascii=False, indent=2)
+                )]
+            })
 
-    # Create message for the agent
-    message_content = json.dumps({
-        "failures": failures,
-        "total_success": len(new_coordinates),
-        "total_failures": len(failures),
-    }, ensure_ascii=False, indent=2)
+        LOGGER.info(f"Found coordinates for '{original_name}': ({latitude}, {longitude})")
 
-    # Return Command to update state
-    return Command(
-        update={
-            "attraction_coordinates": attraction_coordinates,
-            "all_coordinates_obtained": all_coordinates_obtained,
-            "messages": [ToolMessage(content=message_content, tool_call_id=runtime.tool_call_id)]
+        # Build result with place info
+        result = {
+            "original_name": original_name,
+            "query": query,
+            "found": True,
+            "place": {
+                "title": best_place.get("title", ""),
+                "address": best_place.get("address", ""),
+                "latitude": latitude,
+                "longitude": longitude,
+                "rating": best_place.get("rating"),
+                "category": best_place.get("category", ""),
+            }
         }
-    )
+
+        # Update state with coordinates (using original_name as key)
+        return Command(
+            update={
+                "attraction_coordinates": {
+                    original_name: {
+                        "lat": latitude,
+                        "lon": longitude
+                    }
+                },
+                "messages": [ToolMessage(
+                    tool_call_id=runtime.tool_call_id,
+                    content=json.dumps(result, ensure_ascii=False, indent=2)
+                )]
+            },
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Place search error: {e}")
+        return Command(update={"messages": [ToolMessage(
+            tool_call_id=runtime.tool_call_id,
+            content=json.dumps({
+                "error": f"Place search error: {str(e)}",
+                "original_name": original_name,
+                "found": False
+            }, ensure_ascii=False, indent=2)
+        )]})
 
 
 def _calculate_centroid(coordinates: dict, names: list) -> tuple:
@@ -345,12 +476,18 @@ def organize_attractions_by_days(
     try:
         num_days = runtime.state.get("num_days")
         coordinates = runtime.state.get("attraction_coordinates", {})
-        all_coords_ok = runtime.state.get("all_coordinates_obtained", False)
+        failed_lookups = runtime.state.get("failed_coordinate_lookups", [])
 
-        if not all_coords_ok:
+        # Filter out failures that were corrected by retry (attraction now has coordinates)
+        unresolved_failures = [name for name in failed_lookups if name not in coordinates]
+
+        if unresolved_failures:
             return Command(update={
                 "messages": [ToolMessage(
-                    json.dumps({"error": "Incomplete coordinates. Call extract_coordinates first."}, ensure_ascii=False),
+                    json.dumps({
+                        "error": f"Failed to get coordinates for: {unresolved_failures}. "
+                                 f"Retry search_place_address with different queries for these attractions."
+                    }, ensure_ascii=False),
                     tool_call_id=runtime.tool_call_id
                 )]
             })
@@ -358,7 +495,7 @@ def organize_attractions_by_days(
         if not coordinates:
             return Command(update={
                 "messages": [ToolMessage(
-                    json.dumps({"error": "No coordinates found. Call extract_coordinates first."}, ensure_ascii=False),
+                    json.dumps({"error": "No coordinates found. Call search_place_address for each attraction first."}, ensure_ascii=False),
                     tool_call_id=runtime.tool_call_id
                 )]
             })
@@ -904,8 +1041,7 @@ def update_itinerary_organization(
 
 # First agent (day organizer) - needs search, coordinate extraction, day organization, approval, update, and error handling
 DAY_ORGANIZER_TOOLS = [
-    search_attraction_info,
-    extract_coordinates,
+    search_place_address,
     organize_attractions_by_days,
     request_itinerary_approval,
     update_itinerary_organization,

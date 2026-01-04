@@ -101,6 +101,7 @@ class TavilyMCPClient:
         search_depth: str = "basic",
         include_images: bool = False,
         include_image_descriptions: bool = False,
+        include_raw_content: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -126,6 +127,7 @@ class TavilyMCPClient:
                 "max_results": max_results,
                 "search_depth": search_depth,
                 "include_images": include_images,
+                "include_raw_content": include_raw_content,
             }
 
             if include_image_descriptions:

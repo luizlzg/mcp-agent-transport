@@ -179,10 +179,11 @@ def build_document_node(state: GraphState) -> Dict[str, Any]:
                 if bullet_points:
                     content_blocks.append({"type": "bullet_list", "items": bullet_points})
 
-            # Add images
+            # Add images (limit to 5 for document size)
             images = attraction.get("images", [])
             if not isinstance(images, list):
                 images = []
+            images = images[:5]  # Limit to 5 images per attraction
 
             for idx, img in enumerate(images):
                 if not isinstance(img, dict):
@@ -281,7 +282,43 @@ def build_document_node(state: GraphState) -> Dict[str, Any]:
             }
         )
 
-    content_blocks.append({"type": "final_image", "title": state.get("document_title", ""), "clusters": state.get("clusters", []), "attraction_coordinates": state.get("attraction_coordinates", {})})
+    # Build ordered list of clean titles matching the coordinate order
+    # The coordinates are stored with original names as keys
+    attraction_coordinates = state.get("attraction_coordinates", {})
+    original_names = list(attraction_coordinates.keys())
+
+    # Create a lookup from original name to clean title
+    # processed_attractions has day_number, so we can match by position in each day
+    attractions_by_day_state = state.get("attractions_by_day", [])
+    clean_titles_ordered = []
+
+    for original_name in original_names:
+        # Find which day and position this attraction belongs to
+        found_clean_title = None
+        for day_data in attractions_by_day_state:
+            day_num = day_data.get("day", 1)
+            day_attractions = day_data.get("attractions", [])
+            if original_name in day_attractions:
+                position_in_day = day_attractions.index(original_name)
+                # Find the corresponding processed attraction
+                for proc_attr in processed_attractions:
+                    if isinstance(proc_attr, dict) and proc_attr.get("day_number") == day_num:
+                        # Check if this is the right position (by counting same-day attractions)
+                        same_day_processed = [p for p in processed_attractions
+                                               if isinstance(p, dict) and p.get("day_number") == day_num]
+                        if position_in_day < len(same_day_processed):
+                            found_clean_title = same_day_processed[position_in_day].get("name", original_name)
+                            break
+                break
+        clean_titles_ordered.append(found_clean_title if found_clean_title else original_name)
+
+    content_blocks.append({
+        "type": "final_image",
+        "title": state.get("document_title", ""),
+        "clusters": state.get("clusters", []),
+        "attraction_coordinates": state.get("attraction_coordinates", {}),
+        "clean_titles": clean_titles_ordered  # Pass clean titles for map labels
+    })
 
     LOGGER.info(f"Prepared {len(content_blocks)} content blocks for document")
 
