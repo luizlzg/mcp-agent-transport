@@ -11,6 +11,7 @@ import os
 from typing import Any, Dict, Optional, Callable
 from langchain.agents.middleware import AgentMiddleware
 from src.utils.logger import LOGGER
+from src.agent.tools import _check_url_accessible
 
 
 class StructuredOutputValidationError(Exception):
@@ -63,13 +64,14 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
         )
 
     def _default_validator(
-        self, output: Dict[str, Any]
+        self, output: Dict[str, Any], state: Dict[str, Any] = None
     ) -> tuple[bool, str]:
         """
         Default validation function - checks if all required keys are present.
 
         Args:
             output: The structured output to validate
+            state: Optional state dict (not used in default validator)
 
         Returns:
             Tuple of (is_valid, error_message)
@@ -78,7 +80,7 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
             return False, f"Output is not a dict, got {type(output).__name__}"
 
         missing_keys = []
-        for key in self.expected_schema.keys():
+        for key in self.expected_schema.__annotations__.keys():
             if key not in output:
                 missing_keys.append(key)
 
@@ -86,7 +88,7 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
             return (
                 False,
                 f"Missing required fields: {', '.join(missing_keys)}. "
-                f"Expected schema: {list(self.expected_schema.keys())}",
+                f"Expected schema: {list(self.expected_schema.__annotations__.keys())}",
             )
 
         # Check for empty required fields
@@ -138,13 +140,32 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
 
             # Create error feedback message asking the agent to generate structured output
             error_feedback_message = f"""
-ATTENTION: You did not provide a structured output response.
+CRITICAL: You have NOT generated the required structured output yet!
 
-You MUST return the data in the correct structured format with ALL required fields: {list(self.expected_schema.__annotations__.keys())}
+After completing your research with the tools, you MUST generate the final DayResearchResult structure.
 
-Please generate the structured output now based on the research you already did.
+{{
+  "attractions": [
+    {{
+      "name": "Attraction Name",
+      "day_number": 1,
+      "description": "Detailed 150-300 word description...",
+      "images": [
+        {{"id": "img1", "url_regular": "https://...", "caption": "Description of image"}}
+      ],
+      "ticket_info": [
+        {{"title": "Ticket Type", "content": "Price details", "url": "https://official-site.com/tickets"}}
+      ],
+      "useful_links": [
+        {{"title": "Official Site", "url": "https://..."}}
+      ],
+      "estimated_cost": 25.0,
+      "currency": "EUR"
+    }}
+  ]
+}}
 
-IMPORTANT: Return the complete and correctly filled structure.
+Generate this structured output NOW based on the research you already did.
 """
 
             # Raise error with messages - agent definition will handle retry
@@ -155,8 +176,8 @@ IMPORTANT: Return the complete and correctly filled structure.
                 state
             )
 
-        # Validate the output
-        is_valid, error_message = self.validator_func(structured_output)
+        # Validate the output (pass state to validator for attraction coverage check)
+        is_valid, error_message = self.validator_func(structured_output, state)
 
         if is_valid:
             LOGGER.info("✅ Structured output validation passed")
@@ -175,9 +196,7 @@ ATTENTION: The previous response was not in the correct format.
 Error found: {error_message}
 
 Please provide the response AGAIN in the correct structured format.
-Make sure to include ALL required fields: {list(self.expected_schema.keys())}
-
-IMPORTANT: Return the complete and correctly filled structure.
+Make sure to include ALL required fields.
 """
 
         # Raise error with messages - agent definition will handle retry
@@ -191,7 +210,7 @@ IMPORTANT: Return the complete and correctly filled structure.
 
 # Validation functions for specific schemas
 
-def validate_organized_itinerary(output: Dict[str, Any]) -> tuple[bool, str]:
+def validate_organized_itinerary(output: Dict[str, Any], state: Dict[str, Any] = None) -> tuple[bool, str]:
     """
     Validate OrganizedItinerary schema.
 
@@ -240,13 +259,16 @@ def validate_organized_itinerary(output: Dict[str, Any]) -> tuple[bool, str]:
     return True, ""
 
 
-def validate_day_research_result(output: Dict[str, Any]) -> tuple[bool, str]:
+def validate_day_research_result(output: Dict[str, Any], state: Dict[str, Any] = None) -> tuple[bool, str]:
     """
     Validate DayResearchResult schema.
 
     Expected:
     - day_number (int)
     - attractions (list of AttractionResearchResult dicts)
+
+    Also validates that all attractions from attraction_coordinates (if in state)
+    have been documented by comparing attraction_key values.
     """
     if not isinstance(output, dict):
         return False, f"Output must be a dict, got {type(output).__name__}"
@@ -262,8 +284,8 @@ def validate_day_research_result(output: Dict[str, Any]) -> tuple[bool, str]:
     if not attractions:
         return False, "'attractions' cannot be empty - must research all attractions for this day"
 
-    # Validate each attraction
-    required_fields = ["name", "day_number", "description", "images", "estimated_cost"]
+    # First pass: check required fields and empty images
+    required_fields = ["name", "attraction_key", "day_number", "description", "images", "estimated_cost"]
     for idx, attraction in enumerate(attractions):
         if not isinstance(attraction, dict):
             return False, f"Attraction at index {idx} must be a dict"
@@ -272,15 +294,111 @@ def validate_day_research_result(output: Dict[str, Any]) -> tuple[bool, str]:
             if field not in attraction:
                 return False, f"Attraction at index {idx} missing '{field}' field"
 
-        # Check name is not empty
         if not attraction["name"]:
             return False, f"Attraction at index {idx} 'name' cannot be empty"
-        
-        # Check images is not empty - MUST search images for all attractions                 
+
         images = attraction.get("images", [])
         if not images:
             attraction_name = attraction.get("name", f"at index {idx}")
-            return False, f"Attraction '{attraction_name}' has no images. You MUST search images for ALL attractions using search_attraction_images tool. Search for images of '{attraction_name}' now."   
+            return False, f"Attraction '{attraction_name}' has no images. You MUST search images for ALL attractions using search_attraction_images tool. Search for images of '{attraction_name}' now."
+
+    # Second pass: validate image URLs and collect all broken ones
+    attractions_with_broken_images = []
+
+    for attraction in attractions:
+        attraction_name = attraction.get("name", "Unknown")
+        images = attraction.get("images", [])
+
+        all_broken = True
+        broken_urls = []
+
+        for img in images:
+            url = img.get("url_regular", "")
+            is_accessible, error_message = _check_url_accessible(url, timeout=5)
+
+            if is_accessible:
+                all_broken = False
+                LOGGER.info(f"✅ Image URL accessible for '{attraction_name}': {url}")
+            else:
+                broken_urls.append((url, error_message))
+                LOGGER.warning(f"❌ Image URL broken for '{attraction_name}': {url} - {error_message}")
+
+        if all_broken and broken_urls:
+            error_details = ", ".join([f"{url} ({err})" for url, err in broken_urls[:3]])
+            attractions_with_broken_images.append({
+                "name": attraction_name,
+                "error_details": error_details
+            })
+
+    # Return error if any attractions have all broken images
+    if attractions_with_broken_images:
+        error_lines = []
+        for item in attractions_with_broken_images:
+            error_lines.append(f"- '{item['name']}': {item['error_details']}")
+
+        return False, (
+            f"All images are broken/inaccessible for {len(attractions_with_broken_images)} attraction(s):\n"
+            f"{chr(10).join(error_lines)}\n\n"
+            f"Use search_attraction_images to search for new images for each of these attractions."
+        )
+
+    # Check ticket_info URLs are accessible - only for PAID attractions
+    # Free attractions should have empty ticket_info []
+    for idx, attraction in enumerate(attractions):
+        ticket_info = attraction.get("ticket_info", [])
+        attraction_name = attraction.get("name", f"at index {idx}")
+
+        for info in ticket_info:
+            if not isinstance(info, dict):
+                continue
+
+            url = info.get("url", "")
+
+            # URL must not be empty for paid attractions
+            if not url:
+                ticket_title = info.get("title", "Unknown")
+                return False, (
+                    f"Ticket info for '{attraction_name}' ({ticket_title}) has an empty URL. "
+                    f"If this is a FREE attraction, remove the ticket_info entry and just mention 'Free entry' in the description. "
+                    f"If this is a PAID attraction, use search_ticket_link to find an official ticket URL."
+                )
+
+            # Check if URL is accessible
+            is_accessible, error_message = _check_url_accessible(url)
+            if not is_accessible:
+                ticket_title = info.get("title", "Unknown")
+                return False, (
+                    f"Ticket link for '{attraction_name}' ({ticket_title}) is broken: {url} - {error_message}. "
+                    f"Use search_ticket_link with a different query to find a working official ticket URL."
+                )
+
+    # Check all attractions for this day were documented (if state provided)
+    if state:
+        # Get attractions for THIS day (not all attractions)
+        attractions_by_day = state.get("attractions_by_day", [])
+        day_number = attractions[0].get("day_number", None)
+        attractions_list = []
+        for day_attraction in attractions_by_day:
+            if day_attraction.get("day") == day_number:
+                attractions_list = day_attraction.get("attractions", [])
+                break
+        if attractions_list:
+            expected_keys = set(attractions_list)
+            documented_keys = {attr.get("attraction_key", "") for attr in attractions}
+
+            missing = expected_keys - documented_keys
+            if missing:
+                missing_list = list(missing)
+                return False, (
+                    f"Missing documentation for {len(missing_list)} attraction(s):\n"
+                    + "\n".join([f"  - {name}" for name in missing_list])
+                    + "\n\nFor EACH missing attraction above:\n"
+                    "1. Use search_attraction_info to research detailed information\n"
+                    "2. Use search_attraction_images to find high-quality images\n"
+                    "3. For PAID attractions, use search_ticket_link to find official ticket URLs\n"
+                    "4. Add the attraction to your output with attraction_key EXACTLY matching the name above\n\n"
+                    "Do NOT skip any attraction. Research and document ALL of them."
+                )
 
     return True, ""
 
@@ -367,8 +485,7 @@ You MUST use one of the following tools:
 - 'return_invalid_input_error': To return an error message (invalid/unrelated input)
 
 If the input contains tourist attractions:
-1. Extract coordinates for ALL attractions using 'extract_coordinates'
-2. Use 'organize_attractions_by_days' to organize the attractions
+1. Use 'organize_attractions_by_days' to organize the attractions
 
 If the input is empty, unrelated, or doesn't contain attractions:
 1. Use 'return_invalid_input_error' with an explanatory message
@@ -408,4 +525,59 @@ Please call 'request_itinerary_approval' now to get user approval for the itiner
             )
 
         LOGGER.info("✅ Workflow validation passed")
+        return state
+
+
+class ToolUsageValidatorMiddleware(AgentMiddleware):
+    """
+    Middleware that validates required search tools were called.
+
+    Prevents hallucinations by ensuring search_attraction_info and
+    search_attraction_images were called at least once.
+    """
+
+    def __init__(self, required_tools: Optional[list[str]] = None):
+        self.required_tools = required_tools or ["search_attraction_info", "search_attraction_images"]
+        LOGGER.info(f"Initialized ToolUsageValidatorMiddleware (required_tools={self.required_tools})")
+
+    def after_agent(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Check if required tools were called in messages."""
+        LOGGER.info("Running ToolUsageValidatorMiddleware.after_agent")
+
+        messages = state.get("messages", [])
+
+        # Collect all tool names that were called
+        called_tools = set()
+        for msg in messages:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    tool_name = tool_call.get("name")
+                    if tool_name:
+                        called_tools.add(tool_name)
+
+        # Check which required tools are missing
+        missing_tools = set(self.required_tools) - called_tools
+
+        if missing_tools:
+            error_feedback_message = f"""
+CRITICAL: You did NOT use the required search tools!
+
+Missing tools: {', '.join(missing_tools)}
+
+You MUST call these tools:
+- search_attraction_info: To research detailed information
+- search_attraction_images: To find high-quality images
+
+Do NOT skip this step or make up information.
+"""
+            LOGGER.warning(f"⚠️ Tool usage validation failed - missing: {missing_tools}")
+
+            raise StructuredOutputValidationError(
+                f"Required tools not called: {missing_tools}",
+                error_feedback_message,
+                messages,
+                state
+            )
+
+        LOGGER.info("✅ Tool usage validation passed")
         return state

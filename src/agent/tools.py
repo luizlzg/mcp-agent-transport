@@ -1,6 +1,8 @@
 """Tools for the multi-agent itinerary generation graph."""
 import os
 import json
+import requests
+from bs4 import BeautifulSoup
 from langchain.tools import tool, ToolRuntime
 from langchain.messages import ToolMessage
 from langgraph.types import Command, interrupt
@@ -56,6 +58,36 @@ WATERMARK_DOMAINS = [
 ]
 
 
+# Headers for URL validation requests (avoid 403 errors)
+URL_CHECK_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _check_url_accessible(url: str, timeout: int = 30) -> tuple[bool, str]:
+    """
+    Check if a URL is accessible.
+
+    Args:
+        url: The URL to check
+        timeout: Request timeout in seconds (default: 15)
+
+    Returns:
+        Tuple of (is_accessible, error_message)
+    """
+    try:
+        response = requests.head(url, timeout=timeout, headers=URL_CHECK_HEADERS, allow_redirects=True)
+        if 200 <= response.status_code < 400:
+            return True, ""
+        return False, f"HTTP {response.status_code}"
+    except requests.Timeout:
+        return True, "Timeout, but it worked."
+    except requests.RequestException as e:
+        return False, str(e)
+
+
 # Global clients (initialized on first use)
 _tavily_client = None
 
@@ -81,46 +113,110 @@ def _is_watermark_domain(url: str) -> bool:
     return False
 
 
+def _fetch_page_content(url: str, timeout: int = 10, max_chars: int = 1000) -> str:
+    """
+    Fetch and extract text content from a URL.
+
+    Args:
+        url: The URL to fetch
+        timeout: Request timeout in seconds
+        max_chars: Maximum characters to return (to avoid huge responses)
+
+    Returns:
+        Extracted text content or error message
+    """
+    try:
+        response = requests.get(
+            url,
+            timeout=timeout,
+            headers=URL_CHECK_HEADERS,
+            allow_redirects=True
+        )
+        response.raise_for_status()
+
+        # Parse HTML and extract text
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Remove script and style elements
+        for element in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+            element.decompose()
+
+        # Get text content
+        text = soup.get_text(separator='\n', strip=True)
+
+        # Clean up multiple newlines
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        text = '\n'.join(lines)
+
+        # Truncate if too long
+        if len(text) > max_chars:
+            text = text[:max_chars] + "..."
+
+        return text
+
+    except requests.Timeout:
+        return "[Error: Request timeout]"
+    except requests.RequestException as e:
+        return f"[Error: {str(e)}]"
+    except Exception as e:
+        return f"[Error parsing page: {str(e)}]"
+
+
 @tool
 def search_attraction_info(
     query: str,
 ) -> str:
     """
-    Web search tool to find information about attractions.
-    Use this tool when you need to search for general information online.
+    Web search tool to find information about attractions using Google Search.
+    Fetches full page content from search results.
 
     Args:
         query: Search query
 
     Returns:
-        JSON string with search results
+        JSON string with search results (5 results) including full page content
     """
-    client = get_tavily_client()
-    if not client:
+    serper_api_key = os.getenv("SERPER_API_KEY")
+    if not serper_api_key:
         return json.dumps({
-            "error": "Tavily not configured. Set TAVILY_API_KEY in .env file",
+            "error": "SERPER_API_KEY not configured. Set it in .env file",
         }, ensure_ascii=False)
 
     try:
-        search_results = client.search(
-            query,
-            max_results=3,
-            search_depth="advanced",
+        from langchain_community.utilities import GoogleSerperAPIWrapper
+
+        search = GoogleSerperAPIWrapper(
+            serper_api_key=serper_api_key,
+            type="search",
+            k=5
         )
 
-        tool_output = search_results.get("results", [])
-        tool_output = [
-            {
-                "url": res.get("url", ""),
-                "title": res.get("title", ""),
-                "content": res.get("content", res.get("raw_content", ""))
-            }
-            for res in tool_output
-        ]
+        LOGGER.info(f"SERP search for attraction info: '{query}'")
+        raw_results = search.results(query)
+
+        # Extract organic results
+        organic = raw_results.get("organic", [])
+
+        tool_output = []
+        for res in organic[:3]:
+            url = res.get("link", "")
+            title = res.get("title", "")
+
+            # Fetch full page content
+            LOGGER.info(f"Fetching content from: {url}")
+            content = _fetch_page_content(url)
+
+            tool_output.append({
+                "url": url,
+                "title": title,
+                "snippet": res.get("snippet", ""),
+                "content": content
+            })
 
         return json.dumps(tool_output, ensure_ascii=False, indent=2)
 
     except Exception as e:
+        LOGGER.error(f"SERP search error: {e}")
         return json.dumps({
             "error": f"Search error: {str(e)}",
         }, ensure_ascii=False)
@@ -137,12 +233,19 @@ def search_attraction_images(
     Makes multiple searches with query variations to get more images,
     since Tavily typically returns only 5-10 images per search.
 
+    Automatically validates image URLs and filters out broken/inaccessible links
+    before returning results.
+
     Args:
         query: Search query (attraction name, city, etc.)
         count: Number of images to fetch (default: 10)
 
     Returns:
-        JSON string with image URLs found
+        JSON string with validated image URLs. Includes metadata:
+        - images_found: Total images found from search
+        - images_valid: Number of accessible images returned
+        - images_filtered: Number of broken images filtered out
+        - images: List of accessible image URLs with descriptions
     """
     client = get_tavily_client()
     if not client:
@@ -184,12 +287,34 @@ def search_attraction_images(
             if len(all_images) >= count:
                 break
 
+        # Validate image URLs and filter out broken ones
+        valid_images = []
+        broken_count = 0
+
+        LOGGER.info(f"Validating {min(len(all_images), count)} image URLs for accessibility...")
+
+        for img_object in all_images[:count]:
+            url = img_object.get("url", "")
+
+            # Check if URL is accessible
+            is_accessible, error_message = _check_url_accessible(url, timeout=5)
+
+            if is_accessible:
+                valid_images.append(img_object)
+                LOGGER.info(f"✅ Image URL accessible: {url}")
+            else:
+                broken_count += 1
+                LOGGER.warning(f"❌ Image URL broken (filtered out): {url} - {error_message}")
+
+        # Build result with only valid images
         result = {
             "images_found": len(all_images),
+            "images_valid": len(valid_images),
+            "images_filtered": broken_count,
             "images": []
         }
 
-        for img_object in all_images[:count]:
+        for img_object in valid_images:
             result["images"].append({
                 "url_regular": img_object.get("url", ""),
                 "description": img_object.get("description", ""),
@@ -201,6 +326,128 @@ def search_attraction_images(
         return json.dumps({
             "error": f"Image search error: {str(e)}",
         }, ensure_ascii=False)
+
+
+# Third-party ticket reseller domains to filter out
+TICKET_RESELLER_DOMAINS = [
+    "tripadvisor.com",
+    "viator.com",
+    "getyourguide.com",
+    "tiqets.com",
+    "klook.com",
+    "booking.com",
+    "expedia.com",
+    "musement.com",
+    "headout.com",
+    "civitatis.com",
+    "ticketmaster.com",
+]
+
+
+def _is_ticket_reseller(url: str) -> bool:
+    """Check if URL is from a known ticket reseller domain."""
+    url_lower = url.lower()
+    for domain in TICKET_RESELLER_DOMAINS:
+        if domain in url_lower:
+            return True
+    return False
+
+
+@tool
+def search_ticket_link(query: str) -> str:
+    """
+    Search for ticket purchase links using Google Search (Serper).
+
+    Use this tool to find official ticket/booking pages for attractions.
+    You control the search query - craft it to find official ticket pages.
+
+    The tool automatically validates that URLs are accessible and filters out broken links.
+    Only working URLs are returned.
+
+    Args:
+        query: Search query to find ticket links. Examples:
+               - "buy tickets Colosseum Rome official"
+               - "Louvre Museum Paris billets site officiel"
+               - "Vatican Museums tickets official website"
+               - "biglietti Musei Vaticani sito ufficiale"
+
+    Returns:
+        JSON with validated, working ticket page URLs.
+        Results from third-party resellers (TripAdvisor, Viator, etc.) are filtered out.
+        Only accessible URLs (HTTP 200-399) are included.
+    """
+    serper_api_key = os.getenv("SERPER_API_KEY")
+    if not serper_api_key:
+        return json.dumps({
+            "error": "SERPER_API_KEY not configured. Set it in .env file.",
+        }, ensure_ascii=False, indent=2)
+
+    try:
+        from langchain_community.utilities import GoogleSerperAPIWrapper
+
+        search = GoogleSerperAPIWrapper(
+            serper_api_key=serper_api_key,
+            type="search",
+            k=15  # Get more results to have enough after filtering and validation
+        )
+
+        LOGGER.info(f"Serper ticket search: '{query}'")
+        raw_results = search.results(query)
+
+        # Extract organic results
+        organic_results = raw_results.get("organic", [])
+
+        # Filter out reseller domains, validate URLs, and format results
+        validated_results = []
+        checked_count = 0
+
+        for result in organic_results:
+            url = result.get("link", "")
+
+            # Skip reseller domains
+            if not url or _is_ticket_reseller(url):
+                continue
+
+            checked_count += 1
+            LOGGER.info(f"Validating ticket URL ({checked_count}): {url}")
+
+            # Validate URL is accessible
+            is_accessible, error_message = _check_url_accessible(url)
+
+            if is_accessible:
+                validated_results.append({
+                    "title": result.get("title", ""),
+                    "url": url,
+                    "snippet": result.get("snippet", ""),
+                })
+                LOGGER.info(f"✅ Valid ticket URL: {url}")
+
+                # Stop after 3 valid results
+                if len(validated_results) >= 3:
+                    break
+            else:
+                LOGGER.info(f"❌ Invalid ticket URL: {url} - {error_message}")
+
+            # Don't check too many URLs to avoid slowdown
+            if checked_count >= 8:
+                break
+
+        if not validated_results:
+            return json.dumps({
+                "results": [],
+                "message": "No working official ticket pages found. Try a different search query (e.g., in local language, or with 'official site')."
+            }, ensure_ascii=False, indent=2)
+
+        return json.dumps({
+            "results": validated_results,
+            "message": f"Found {len(validated_results)} working official ticket page(s). Use the URL from the most official-looking domain."
+        }, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        LOGGER.error(f"Ticket link search error: {e}")
+        return json.dumps({
+            "error": f"Search error: {str(e)}",
+        }, ensure_ascii=False, indent=2)
 
 
 @tool
@@ -422,6 +669,7 @@ def _validate_day_assignments(assignments: dict, num_days: int, param_name: str)
 @tool
 def organize_attractions_by_days(
     runtime: ToolRuntime,
+    thinking: str = None,
     day_preferences: dict[str, int] = None,
     isolated_days: dict[str, int] = None,
     optimize_order_by_distance: bool = False,
@@ -437,13 +685,21 @@ def organize_attractions_by_days(
     IMPORTANT: All coordinates must have been obtained via 'extract_coordinates' first.
 
     Args:
-        day_preferences: Optional dict with {attraction_name: day_number} for attractions that
+        thinking: MANDATORY. Your DETAILED reasoning explaining:
+                  1) How you interpreted the user input (day labels, isolation requests, etc.)
+                  2) Classification of each attraction (day_preferences vs isolated_days vs flexible)
+                  3) WHICH PARAMETERS you will fill and WHY
+                  4) The actual VALUES for each parameter
+                  Format: "[Input analysis]. Therefore: day_preferences={...}, isolated_days={...},
+                  optimize_order_by_distance=True/False, starting_point=..., min/max_attractions_per_day=..."
+
+        day_preferences: Dict with {attraction_name: day_number} for attractions that
                          MUST be on a specific day. The preference is ABSOLUTE - the attraction
                          goes to the specified day regardless of K-means.
                          Other flexible attractions can be added to the same day.
                          Example: {"Eiffel Tower, Paris": 1} - Eiffel Tower on day 1.
 
-        isolated_days: Optional dict with {attraction_name: day_number} for attractions that
+        isolated_days: Dict with {attraction_name: day_number} for attractions that
                        need an EXCLUSIVE day for themselves (no other attractions).
                        Example: {"Disneyland Paris": 1} - Day 1 is only for Disneyland,
                        K-means groups the others on remaining days.
@@ -453,18 +709,18 @@ def organize_attractions_by_days(
                                     Useful when user specifies all days but wants distance optimization.
                                     Default: False (preserve user's order when all days are predefined).
 
-        starting_point: Optional attraction name to start the route from when optimizing by distance.
+        starting_point: Attraction name to start the route from when optimizing by distance.
                         Must be one of the attractions in the coordinates.
                         Only used when optimize_order_by_distance=True.
                         Example: "Eiffel Tower, Paris" - start the optimized route from Eiffel Tower.
 
-        min_attractions_per_day: Optional minimum number of attractions per day (for flexible attractions).
+        min_attractions_per_day: Minimum number of attractions per day (for flexible attractions).
                                  Uses constrained K-means to ensure each cluster has at least this many members.
                                  The number of days/clusters remains unchanged.
                                  Example: min_attractions_per_day=2 ensures no day has fewer than 2 attractions.
                                  Note: Only applies to flexible attractions, not isolated days or preferences.
 
-        max_attractions_per_day: Optional maximum number of attractions per day (for flexible attractions).
+        max_attractions_per_day: Maximum number of attractions per day (for flexible attractions).
                                  Uses constrained K-means to ensure each cluster has at most this many members.
                                  The number of days/clusters remains unchanged.
                                  Example: max_attractions_per_day=4 ensures no day has more than 4 attractions.
@@ -474,6 +730,37 @@ def organize_attractions_by_days(
         Command that updates state with clusters and organization info.
     """
     try:
+        # Validate thinking parameter is provided
+        if not thinking or not thinking.strip():
+            return Command(update={
+                "messages": [ToolMessage(
+                    json.dumps({
+                        "error": "THINKING REQUIRED: You must fill the 'thinking' parameter with DETAILED reasoning: "
+                                 "1) How you interpreted the user input (day labels, isolation requests, etc.), "
+                                 "2) Classification of each attraction (day_preferences vs isolated_days vs flexible), "
+                                 "3) WHICH PARAMETERS you will fill (day_preferences, isolated_days, optimize_order_by_distance, starting_point, min/max_attractions_per_day), "
+                                 "4) The actual VALUES for each parameter. "
+                                 "Example: 'User used dia 1:, dia 2: labels. ALL attractions have predefined days. "
+                                 "Therefore: day_preferences={coliseu: 1, forum: 1, ...}, isolated_days={}, optimize_order_by_distance=False.'"
+                    }, ensure_ascii=False),
+                    tool_call_id=runtime.tool_call_id
+                )]
+            })
+
+        LOGGER.info(f"Agent thinking: {thinking[:500]}...")
+
+        # Check if itinerary was already approved - cannot reorganize after approval
+        if runtime.state.get("itinerary_approved", False):
+            return Command(update={
+                "messages": [ToolMessage(
+                    json.dumps({
+                        "error": "CANNOT REORGANIZE: The itinerary has already been approved. "
+                                 "To make changes, use 'update_itinerary_organization' tool instead."
+                    }, ensure_ascii=False),
+                    tool_call_id=runtime.tool_call_id
+                )]
+            })
+
         num_days = runtime.state.get("num_days")
         coordinates = runtime.state.get("attraction_coordinates", {})
         failed_lookups = runtime.state.get("failed_coordinate_lookups", [])
@@ -1048,8 +1335,9 @@ DAY_ORGANIZER_TOOLS = [
     return_invalid_input_error,
 ]
 
-# Second agent (attraction researcher) - needs search and images
+# Second agent (attraction researcher) - needs search, images, ticket search, and ticket validation
 ATTRACTION_RESEARCHER_TOOLS = [
     search_attraction_info,
     search_attraction_images,
+    search_ticket_link,
 ]

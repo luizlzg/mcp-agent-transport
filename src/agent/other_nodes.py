@@ -73,6 +73,7 @@ def assign_workers_node(state: GraphState) -> Union[List[Send], Literal["__end__
                     "day_number": day_number,
                     "preferences_input": preferences_input,
                     "language": language,
+                    "attractions_by_day": state.get("attractions_by_day", {}),
                 },
             )
         )

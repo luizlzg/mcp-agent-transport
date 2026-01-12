@@ -33,6 +33,7 @@ A multi-agent LangGraph system that transforms a list of tourist attractions int
 - **Cost Summary**: Grouped by currency with per-person estimates
 
 ### Other
+- **Per-Agent Model Configuration**: Use different LLM models for each agent (e.g., Claude for organizing, GPT-4 for research)
 - **Address-Based Geocoding**: Google Places search for accurate coordinates
 - **Multilingual Maps**: Preserves clean attraction titles on route maps
 - **Email Delivery**: Send generated itineraries via SMTP
@@ -108,10 +109,19 @@ Create a `.env` file with the following:
 # OpenRouter API (required) - https://openrouter.ai/keys
 OPENROUTER_API_KEY=sk-or-...
 
-# Model name in OpenRouter format (provider/model)
+# Model Configuration - Per-Agent or Global
 # Browse models at: https://openrouter.ai/models
+
+# First agent - organizes attractions into days
+DAY_ORGANIZER_MODEL=anthropic/claude-sonnet-4-20250514
+
+# Second agent - researches attraction details
+ATTRACTION_RESEARCHER_MODEL=anthropic/claude-sonnet-4-20250514
+
+# Fallback model (used if specific agent model not set)
 MODEL_NAME=anthropic/claude-sonnet-4-20250514
-# Other examples: openai/gpt-4o, google/gemini-pro-1.5, x-ai/grok-3
+
+# Other model examples: openai/gpt-4o, google/gemini-pro-1.5, x-ai/grok-3
 
 # Serper API (required for place address search) - https://serper.dev
 SERPER_API_KEY=...
@@ -193,6 +203,16 @@ The Day Organizer understands three types of user intent:
 | **Isolated** | "Disneyland needs a full day" | Attraction gets exclusive day |
 | **Specific Day** | "Eiffel Tower on day 1" | Assigned to day, can share with others |
 | **Flexible** | Just listing attractions | Grouped by geographic proximity |
+
+### Free-Only Attractions
+
+When you indicate you won't pay for an attraction, the researcher agent respects this:
+
+| Input | Behavior |
+|-------|----------|
+| "Torre Eiffel (arredores, não vou entrar)" | No ticket prices, focuses on free experience |
+| "Colosseum (outside only)" | Description covers exterior views and photo spots |
+| "Louvre (free part only)" | No paid entry info, only free areas covered |
 
 ### Clustering Constraints
 

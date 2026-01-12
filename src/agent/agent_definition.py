@@ -23,6 +23,7 @@ from src.middleware import (
     StructuredOutputValidatorMiddleware,
     StructuredOutputValidationError,
     ClusteringToolValidatorMiddleware,
+    ToolUsageValidatorMiddleware,
     validate_organized_itinerary,
     validate_day_research_result,
 )
@@ -139,7 +140,8 @@ def create_attraction_researcher_agent(
     # Format prompt with language
     formatted_prompt = ATTRACTION_RESEARCHER_PROMPT.replace("{language}", language)
 
-    # Create validation middleware
+    # Create validation middlewares
+    tool_usage_validator_middleware = ToolUsageValidatorMiddleware()
     validator_middleware = StructuredOutputValidatorMiddleware(
         expected_schema=DayResearchResult,
         validator_func=validate_day_research_result
@@ -152,7 +154,7 @@ def create_attraction_researcher_agent(
         system_prompt=formatted_prompt,
         state_schema=GraphState,
         response_format=ToolStrategy(DayResearchResult),
-        middleware=[validator_middleware]
+        middleware=[tool_usage_validator_middleware, validator_middleware]
     )
 
     LOGGER.info("Attraction researcher agent created successfully with validation middleware")
@@ -214,8 +216,8 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
     num_days = state.get("num_days", 3)
     preferences_input = state.get("preferences_input", "")
 
-    # Get model config from environment
-    model_name = os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
+    # Get model config from environment (agent-specific or fallback to MODEL_NAME)
+    model_name = os.getenv("DAY_ORGANIZER_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
     max_retries = int(os.getenv("STRUCTURED_OUTPUT_MAX_RETRIES", "3"))
 
     # Prepare initial input message
@@ -377,8 +379,8 @@ def attraction_researcher_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Create logging prefix for this worker
     log_prefix = f"RESEARCH WORKER - DAY {day_number} - ATTRACTIONS: [{', '.join(attractions)}]"
 
-    # Get model config from environment
-    model_name = os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
+    # Get model config from environment (agent-specific or fallback to MODEL_NAME)
+    model_name = os.getenv("ATTRACTION_RESEARCHER_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
     max_retries = int(os.getenv("STRUCTURED_OUTPUT_MAX_RETRIES", "3"))
 
     # Prepare initial input message
@@ -395,7 +397,7 @@ Attractions:
 Remember to:
 1. For EACH attraction, identify if it's a simple or compound attraction (with sub-locations)
 2. Research detailed information for EACH location/sub-location
-3. Search for 2-3 images of EACH location/sub-location
+3. Search for 6-7 images of EACH location/sub-location
 4. Compile ALL attractions into a single structured response (DayResearchResult)
 """
 

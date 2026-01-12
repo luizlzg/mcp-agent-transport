@@ -47,6 +47,7 @@ class LinkInfo(TypedDict):
 class AttractionResearchResult(TypedDict):
     """Complete research result for a single attraction - output from second agent."""
     name: str  # Attraction name
+    attraction_key: str  # Unique key/identifier for the attraction
     day_number: int  # Day number this attraction belongs to
     description: str  # Detailed description
     images: List[ImageInfo]  # Images of the attraction
