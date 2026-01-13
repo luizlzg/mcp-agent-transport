@@ -42,15 +42,23 @@ def check_environment():
     issues = []
 
     # Check LLM API key
-    if not os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
-        issues.append("No LLM API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)")
+    if not os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("OPENROUTER_API_KEY"):
+        issues.append("No LLM API key configured (OPENAI_API_KEY, ANTHROPIC_API_KEY, or OPENROUTER_API_KEY)")
     else:
         if os.getenv("ANTHROPIC_API_KEY"):
             console.print("Anthropic API configured", style="green")
         if os.getenv("OPENAI_API_KEY"):
             console.print("OpenAI API configured", style="green")
+        if os.getenv("OPENROUTER_API_KEY"):
+            console.print("OpenRouter API configured", style="green")
 
-    # Check Tavily (required for web search AND images)
+    # Check Serper (required for place address search)
+    if not os.getenv("SERPER_API_KEY"):
+        issues.append("SERPER_API_KEY not configured (required for place address search)")
+    else:
+        console.print("Serper configured (Google Places search)", style="green")
+
+    # Check Tavily (required for web search and images)
     if not os.getenv("TAVILY_API_KEY"):
         issues.append("TAVILY_API_KEY not configured (required for web search and images)")
     else:
@@ -69,7 +77,7 @@ def check_environment():
             console.print(f"  {issue}")
 
         console.print("\n[dim]Configure the keys in the .env file[/dim]")
-        console.print("[dim]Example: TAVILY_API_KEY=tvly-xxxxxxxxxxxxxxxx[/dim]\n")
+        console.print("[dim]Required: SERPER_API_KEY (for place search) and TAVILY_API_KEY (for web search)[/dim]\n")
 
         if any("No LLM API key" in issue for issue in issues):
             console.print("[bold red]Cannot continue without configuring at least one LLM.[/bold red]")

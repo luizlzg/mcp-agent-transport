@@ -2,7 +2,6 @@
 from typing import TypedDict, Annotated, List, Dict, Any
 import operator
 import numpy
-from src.utils.utilities import merge_dicts, replace_value
 
 
 # ============================================================================
@@ -48,6 +47,7 @@ class LinkInfo(TypedDict):
 class AttractionResearchResult(TypedDict):
     """Complete research result for a single attraction - output from second agent."""
     name: str  # Attraction name
+    attraction_key: str  # Unique key/identifier for the attraction
     day_number: int  # Day number this attraction belongs to
     description: str  # Detailed description
     images: List[ImageInfo]  # Images of the attraction
@@ -76,9 +76,9 @@ class GraphState(TypedDict):
     language: str  # Output language for document generation (e.g., "pt-br", "en", "es", "fr")
 
     # First agent - coordinate extraction state
-    # Using merge_dicts to properly merge coordinate updates from multiple extract_coordinates calls
-    attraction_coordinates: Annotated[Dict[str, Dict[str, float]], merge_dicts]  # {attraction_name: {lat: float, lon: float}}
-    all_coordinates_obtained: Annotated[bool, replace_value]  # True when all attractions have coordinates
+    # Using operator.or_ to merge coordinate updates from multiple search_place_address calls
+    attraction_coordinates: Annotated[Dict[str, Dict[str, float]], operator.or_]  # {attraction_name: {lat: float, lon: float}}
+    failed_coordinate_lookups: Annotated[List[str], operator.add]  # Track attractions that failed coordinate lookup (can be corrected by retry)
     clusters: numpy.ndarray  # Cluster labels for each attraction
 
     # First agent output (day organizer)

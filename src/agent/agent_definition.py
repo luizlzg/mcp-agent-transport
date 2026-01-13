@@ -23,45 +23,41 @@ from src.middleware import (
     StructuredOutputValidatorMiddleware,
     StructuredOutputValidationError,
     ClusteringToolValidatorMiddleware,
+    ToolUsageValidatorMiddleware,
     validate_organized_itinerary,
     validate_day_research_result,
 )
 import os
-import anthropic
 import time
 
 
-def _initialize_llm(model_provider: str = "anthropic", model_name: str = "claude-sonnet-4-20250514"):
+def _initialize_llm(model_name: str = "anthropic/claude-sonnet-4-20250514"):
     """
-    Initialize the LLM based on provider.
+    Initialize the LLM using OpenRouter.
 
     Args:
-        model_provider: LLM provider ('openai' or 'anthropic')
-        model_name: Model name to use
+        model_name: Model name in OpenRouter format (provider/model)
+                    Examples: anthropic/claude-sonnet-4-20250514, openai/gpt-4o, x-ai/grok-3
 
     Returns:
         Initialized LLM instance
     """
-    if model_provider == "openai":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=model_name,
-            temperature=0
-        )
-    elif model_provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(
-            model=model_name,
-            temperature=0,
-            max_tokens=32768
-        )
-    else:
-        raise ValueError(f"Unsupported model provider: {model_provider}")
+    from langchain_openai import ChatOpenAI
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable is required")
+
+    return ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
 
 
 def create_day_organizer_agent(
-    model_provider: str = "anthropic",
-    model_name: str = "claude-sonnet-4-20250514",
+    model_name: str = "anthropic/claude-sonnet-4-20250514",
     num_days: int = 3,
     checkpointer=None
 ):
@@ -77,18 +73,17 @@ def create_day_organizer_agent(
     - Supports interrupt for user approval of K-means organized itineraries
 
     Args:
-        model_provider: LLM provider ('openai' or 'anthropic')
-        model_name: Model name to use
+        model_name: Model name in OpenRouter format (provider/model)
         num_days: Number of days for the itinerary (used in prompt)
         checkpointer: Checkpointer for state persistence (required for interrupt support)
 
     Returns:
         Agent configured with structured output and validation middleware
     """
-    LOGGER.info(f"Creating day organizer agent with {model_provider}/{model_name}")
+    LOGGER.info(f"Creating day organizer agent with {model_name}")
 
     # Initialize LLM
-    llm = _initialize_llm(model_provider, model_name)
+    llm = _initialize_llm(model_name)
 
     # Format prompt with num_days
     formatted_prompt = DAY_ORGANIZER_PROMPT.replace("{num_days}", str(num_days))
@@ -117,8 +112,7 @@ def create_day_organizer_agent(
 
 
 def create_attraction_researcher_agent(
-    model_provider: str = "anthropic",
-    model_name: str = "claude-sonnet-4-20250514",
+    model_name: str = "anthropic/claude-sonnet-4-20250514",
     language: str = "en",
 ):
     """
@@ -132,22 +126,22 @@ def create_attraction_researcher_agent(
     - Uses middleware for structured output validation
 
     Args:
-        model_provider: LLM provider ('openai' or 'anthropic')
-        model_name: Model name to use
+        model_name: Model name in OpenRouter format (provider/model)
         language: Output language for document content
 
     Returns:
         Agent configured with structured output and validation middleware
     """
-    LOGGER.info(f"Creating attraction researcher agent with {model_provider}/{model_name}")
+    LOGGER.info(f"Creating attraction researcher agent with {model_name}")
 
     # Initialize LLM
-    llm = _initialize_llm(model_provider, model_name)
+    llm = _initialize_llm(model_name)
 
     # Format prompt with language
     formatted_prompt = ATTRACTION_RESEARCHER_PROMPT.replace("{language}", language)
 
-    # Create validation middleware
+    # Create validation middlewares
+    tool_usage_validator_middleware = ToolUsageValidatorMiddleware()
     validator_middleware = StructuredOutputValidatorMiddleware(
         expected_schema=DayResearchResult,
         validator_func=validate_day_research_result
@@ -160,7 +154,7 @@ def create_attraction_researcher_agent(
         system_prompt=formatted_prompt,
         state_schema=GraphState,
         response_format=ToolStrategy(DayResearchResult),
-        middleware=[validator_middleware]
+        middleware=[tool_usage_validator_middleware, validator_middleware]
     )
 
     LOGGER.info("Attraction researcher agent created successfully with validation middleware")
@@ -222,9 +216,8 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
     num_days = state.get("num_days", 3)
     preferences_input = state.get("preferences_input", "")
 
-    # Get model config from environment
-    model_provider = os.getenv("MODEL_PROVIDER", "anthropic")
-    model_name = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
+    # Get model config from environment (agent-specific or fallback to MODEL_NAME)
+    model_name = os.getenv("DAY_ORGANIZER_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
     max_retries = int(os.getenv("STRUCTURED_OUTPUT_MAX_RETRIES", "3"))
 
     # Prepare initial input message
@@ -244,7 +237,6 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
         try:
             # Create agent for this attempt (with checkpointer for interrupt support)
             agent = create_day_organizer_agent(
-                model_provider=model_provider,
                 model_name=model_name,
                 num_days=num_days,
                 checkpointer=checkpointer,
@@ -352,29 +344,6 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
             messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
             state["messages"] = messages
 
-        except anthropic.RateLimitError as e:
-            retry_count += 1
-
-            if retry_count > max_retries:
-                LOGGER.error(f"❌ Day organizer rate limit exceeded after {retry_count} attempts")
-                LOGGER.error(f"Final error: {e}")
-                LOGGER.info("="*60)
-                return {
-                    "document_title": f"Travel Itinerary - {num_days} Days",
-                    "attractions_by_day": [],
-                    "clusters": [],
-                    "attraction_coordinates": {},
-                    "invalid_input": False,
-                    "error_message": ""
-                }
-
-            wait_time = 10 * retry_count  # Exponential backoff
-            LOGGER.warning(f"⚠️ Rate limit exceeded (attempt {retry_count}/{max_retries + 1}): {e}")
-            LOGGER.info(f"Waiting for {wait_time} seconds before retrying...")
-            time.sleep(wait_time)
-            messages = messages + [HumanMessage(content="You executed too many searches in a short time and hit the rate limit. This message indicates you should start over from scratch, making fewer searches per minute to avoid hitting the limit again. Start!")]
-            state["messages"] = messages
-
         except Exception as e:
             LOGGER.error(f"❌ Day organizer failed with unexpected error: {e}", exc_info=True)
             LOGGER.info("="*60)
@@ -410,9 +379,8 @@ def attraction_researcher_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Create logging prefix for this worker
     log_prefix = f"RESEARCH WORKER - DAY {day_number} - ATTRACTIONS: [{', '.join(attractions)}]"
 
-    # Get model config from environment
-    model_provider = os.getenv("MODEL_PROVIDER", "anthropic")
-    model_name = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
+    # Get model config from environment (agent-specific or fallback to MODEL_NAME)
+    model_name = os.getenv("ATTRACTION_RESEARCHER_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
     max_retries = int(os.getenv("STRUCTURED_OUTPUT_MAX_RETRIES", "3"))
 
     # Prepare initial input message
@@ -429,7 +397,7 @@ Attractions:
 Remember to:
 1. For EACH attraction, identify if it's a simple or compound attraction (with sub-locations)
 2. Research detailed information for EACH location/sub-location
-3. Search for 2-3 images of EACH location/sub-location
+3. Search for 6-7 images of EACH location/sub-location
 4. Compile ALL attractions into a single structured response (DayResearchResult)
 """
 
@@ -444,7 +412,6 @@ Remember to:
         try:
             # Create agent for this attempt
             agent = create_attraction_researcher_agent(
-                model_provider=model_provider,
                 model_name=model_name,
                 language=language,
             )
@@ -505,35 +472,6 @@ Remember to:
             # Use all messages from the failed attempt (from middleware) + error feedback
             state = e.state
             messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
-            state["messages"] = messages
-
-        except anthropic.RateLimitError as e:
-            retry_count += 1
-
-            if retry_count > max_retries:
-                LOGGER.error(f"{log_prefix} | ❌ Rate limit exceeded after {retry_count} attempts")
-                LOGGER.error(f"{log_prefix} | Error: {e}")
-                LOGGER.info("="*60)
-                # Return minimal fallback
-                return {"processed_attractions": [
-                    {
-                        "name": a,
-                        "day_number": day_number,
-                        "description": "",
-                        "images": [],
-                        "ticket_info": [],
-                        "useful_links": [],
-                        "estimated_cost": 0.0,
-                        "currency": "EUR",
-                    }
-                    for a in attractions
-                ]}
-
-            wait_time = 10 * retry_count  # Exponential backoff
-            LOGGER.warning(f"{log_prefix} | ⚠️ Rate limit exceeded (attempt {retry_count}/{max_retries + 1}): {e}")
-            LOGGER.info(f"Waiting for {wait_time} seconds before retrying...")
-            time.sleep(wait_time)
-            messages = messages + [HumanMessage(content="You executed too many searches in a short time and hit the rate limit. This message indicates you should start over from scratch, making fewer searches per minute to avoid hitting the limit again. Start!")]
             state["messages"] = messages
 
         except Exception as e:

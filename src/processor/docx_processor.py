@@ -12,6 +12,23 @@ from src.utils.utilities import plot_clusters_on_basemap
 from src.utils.logger import LOGGER
 
 
+# Minimum image area for quality filtering
+MIN_IMAGE_AREA = 250000
+
+# Headers to mimic browser requests (avoid 403 errors)
+IMAGE_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+def _check_image_resolution(img: Image, min_area: int = MIN_IMAGE_AREA) -> bool:
+    """Check if a PIL Image meets minimum area requirement."""
+    width, height = img.size
+    return (width * height) >= min_area
+
+
 # Modern color palette
 COLORS = {
     "primary": RGBColor(0x00, 0x7A, 0xCC),      # Modern blue
@@ -339,7 +356,7 @@ class LocalDocxGenerator:
                     try:
                         # Download image
                         LOGGER.info(f"Downloading image from: {image_url}")
-                        response = requests.get(image_url, timeout=30)
+                        response = requests.get(image_url, timeout=30, headers=IMAGE_REQUEST_HEADERS)
 
                         if response.status_code == 200:
                             LOGGER.info(f"Image downloaded successfully ({len(response.content)} bytes)")
@@ -347,6 +364,12 @@ class LocalDocxGenerator:
                             # Load image to check dimensions
                             img = Image.open(BytesIO(response.content))
                             LOGGER.info(f"Image opened: {img.size}, format: {img.format}")
+
+                            # Skip low-resolution images
+                            if not _check_image_resolution(img):
+                                area = img.size[0] * img.size[1]
+                                LOGGER.info(f"Skipping low-resolution image: {img.size} ({area:,} px, min: {MIN_IMAGE_AREA:,} px)")
+                                continue
 
                             # Save to temp file
                             temp_path = os.path.join(self.output_dir, f"temp_{block.get('id', 'img')}.jpg")
@@ -397,10 +420,14 @@ class LocalDocxGenerator:
                     clusters = block.get("clusters", [])
                     attractions_coordinates = block.get("attraction_coordinates", {})
                     map_title = block.get("title", labels["route_map"])
+                    # Use clean titles if available, otherwise fall back to original names
+                    clean_titles = block.get("clean_titles", [])
 
                     if clusters.tolist() and attractions_coordinates:
-                        attraction_names = list(attractions_coordinates.keys())
-                        locs = [(attractions_coordinates[name]['lon'], attractions_coordinates[name]['lat']) for name in attraction_names]
+                        original_names = list(attractions_coordinates.keys())
+                        # Use clean titles for map labels if provided, otherwise use original names
+                        attraction_names = clean_titles if clean_titles and len(clean_titles) == len(original_names) else original_names
+                        locs = [(attractions_coordinates[name]['lon'], attractions_coordinates[name]['lat']) for name in original_names]
 
                         map_image_path = os.path.join(self.output_dir, "final_map.png")
                         try:
