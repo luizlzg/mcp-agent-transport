@@ -249,6 +249,8 @@ def main():
                     "has_flexible_attractions": False,
                     "itinerary_approved": False,
                     "user_feedback": "",
+                    "api_mode": False,
+                    "failed_coordinate_lookups": [],
                 }
 
                 config = {

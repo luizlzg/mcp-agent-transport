@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from langgraph.errors import GraphInterrupt
 from src.agent.tools import DAY_ORGANIZER_TOOLS, ATTRACTION_RESEARCHER_TOOLS
 from src.agent.prompts import DAY_ORGANIZER_PROMPT, ATTRACTION_RESEARCHER_PROMPT
 from src.agent.state import GraphState, OrganizedItinerary, DayResearchResult
@@ -59,6 +60,7 @@ def _initialize_llm(model_name: str = "anthropic/claude-sonnet-4-20250514"):
 def create_day_organizer_agent(
     model_name: str = "anthropic/claude-sonnet-4-20250514",
     num_days: int = 3,
+    language: str = "en",
     checkpointer=None
 ):
     """
@@ -75,6 +77,7 @@ def create_day_organizer_agent(
     Args:
         model_name: Model name in OpenRouter format (provider/model)
         num_days: Number of days for the itinerary (used in prompt)
+        language: Output language for document title
         checkpointer: Checkpointer for state persistence (required for interrupt support)
 
     Returns:
@@ -86,7 +89,7 @@ def create_day_organizer_agent(
     llm = _initialize_llm(model_name)
 
     # Format prompt with num_days
-    formatted_prompt = DAY_ORGANIZER_PROMPT.replace("{num_days}", str(num_days))
+    formatted_prompt = DAY_ORGANIZER_PROMPT.replace("{num_days}", str(num_days)).replace("{language}", language)
 
     # Create validation middlewares
     validator_middleware = StructuredOutputValidatorMiddleware(
@@ -224,10 +227,20 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
     full_input = f"{user_input}\n\nPreferences: {preferences_input}" if preferences_input else user_input
     messages = [HumanMessage(content=full_input)]
 
-    # Create checkpointer and thread_id for interrupt support
-    checkpointer = MemorySaver()
-    thread_id = str(uuid.uuid4())
-    agent_config = {"configurable": {"thread_id": thread_id}}
+    # Get api_mode from state
+    api_mode = state.get("api_mode", False)
+
+    # Only create checkpointer for CLI mode
+    # In API mode, the outer graph's checkpointer handles everything
+    # This allows interrupt() in tools to propagate to the outer graph
+    if api_mode:
+        checkpointer = None
+        agent_config = {}
+        LOGGER.info("API mode: not using inner checkpointer, interrupt will propagate to outer graph")
+    else:
+        checkpointer = MemorySaver()
+        thread_id = str(uuid.uuid4())
+        agent_config = {"configurable": {"thread_id": thread_id}}
 
     # Retry loop
     retry_count = 0
@@ -239,6 +252,7 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
             agent = create_day_organizer_agent(
                 model_name=model_name,
                 num_days=num_days,
+                language=state.get("language", "en"),
                 checkpointer=checkpointer,
             )
 
@@ -262,41 +276,43 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
                     # Keep last result
                     result = event
 
-            # Check for interrupt after streaming completes
-            while True:
-                if "__interrupt__" in result:
-                    has_interrupt = True
-                    interrupt_info = result["__interrupt__"][0].value
-                else:
-                    has_interrupt = False
-                    interrupt_info = None
+            # Check for interrupt after streaming completes (CLI mode only)
+            # In API mode, interrupts propagate to outer graph, so we don't handle them here
+            if not api_mode:
+                while True:
+                    if "__interrupt__" in result:
+                        has_interrupt = True
+                        interrupt_info = result["__interrupt__"][0].value
+                    else:
+                        has_interrupt = False
+                        interrupt_info = None
 
-                if not has_interrupt:
-                    break
+                    if not has_interrupt:
+                        break
 
-                # Handle itinerary approval interrupt
-                if isinstance(interrupt_info, dict) and interrupt_info.get("type") == "itinerary_approval":
-                    itinerary = interrupt_info.get("itinerary", [])
-                    _display_itinerary_for_approval(itinerary)
-                    user_response = _get_user_approval()
+                    # Handle itinerary approval interrupt
+                    if isinstance(interrupt_info, dict) and interrupt_info.get("type") == "itinerary_approval":
+                        itinerary = interrupt_info.get("itinerary", [])
+                        _display_itinerary_for_approval(itinerary)
+                        user_response = _get_user_approval()
 
-                    LOGGER.info(f"User response: {user_response}")
-                    print("\nProcessing your response...\n")
+                        LOGGER.info(f"User response: {user_response}")
+                        print("\nProcessing your response...\n")
 
-                    # Resume agent with user's response
-                    for event in agent.stream(Command(resume=user_response), config=agent_config, stream_mode="values"):
-                        if "messages" in event and event["messages"]:
-                            event_messages = event["messages"]
+                        # Resume agent with user's response
+                        for event in agent.stream(Command(resume=user_response), config=agent_config, stream_mode="values"):
+                            if "messages" in event and event["messages"]:
+                                event_messages = event["messages"]
 
-                            for msg in event_messages:
-                                if msg not in logged_messages:
-                                    logged_messages.append(msg)
-                                    LOGGER.info(msg.pretty_repr())
+                                for msg in event_messages:
+                                    if msg not in logged_messages:
+                                        logged_messages.append(msg)
+                                        LOGGER.info(msg.pretty_repr())
 
-                            result = event
-                else:
-                    LOGGER.warning(f"Unknown interrupt type: {interrupt_info}")
-                    break
+                                result = event
+                    else:
+                        LOGGER.warning(f"Unknown interrupt type: {interrupt_info}")
+                        break
 
             # Extract structured output from final result
             structured_response = result.get("structured_response", {})
@@ -343,6 +359,12 @@ def day_organizer_node(state: GraphState) -> Dict[str, Any]:
             state = e.state
             messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
             state["messages"] = messages
+
+        except GraphInterrupt:
+            # In API mode, let GraphInterrupt propagate to outer graph
+            # The outer graph's checkpointer will handle it
+            LOGGER.info("GraphInterrupt raised - propagating to outer graph")
+            raise
 
         except Exception as e:
             LOGGER.error(f"❌ Day organizer failed with unexpected error: {e}", exc_info=True)

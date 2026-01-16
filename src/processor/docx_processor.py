@@ -15,6 +15,10 @@ from src.utils.logger import LOGGER
 # Minimum image area for quality filtering
 MIN_IMAGE_AREA = 250000
 
+# Image compression settings (to reduce document size for email)
+MAX_IMAGE_WIDTH = 1200  # Maximum width in pixels
+JPEG_QUALITY = 80       # JPEG compression quality (0-100)
+
 # Headers to mimic browser requests (avoid 403 errors)
 IMAGE_REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -371,12 +375,24 @@ class LocalDocxGenerator:
                                 LOGGER.info(f"Skipping low-resolution image: {img.size} ({area:,} px, min: {MIN_IMAGE_AREA:,} px)")
                                 continue
 
-                            # Save to temp file
+                            # Resize if too large (to reduce file size for email)
+                            width, height = img.size
+                            if width > MAX_IMAGE_WIDTH:
+                                ratio = MAX_IMAGE_WIDTH / width
+                                new_size = (MAX_IMAGE_WIDTH, int(height * ratio))
+                                img = img.resize(new_size, Image.LANCZOS)
+                                LOGGER.info(f"Image resized from {width}x{height} to {new_size[0]}x{new_size[1]}")
+
+                            # Convert to RGB if necessary (for PNG with transparency)
+                            if img.mode in ('RGBA', 'P'):
+                                img = img.convert('RGB')
+
+                            # Save to temp file with compression
                             temp_path = os.path.join(self.output_dir, f"temp_{block.get('id', 'img')}.jpg")
                             LOGGER.info(f"Saving to temp file: {temp_path}")
 
-                            img.save(temp_path, "JPEG")
-                            LOGGER.info("Temp file saved successfully")
+                            img.save(temp_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
+                            LOGGER.info(f"Temp file saved with quality={JPEG_QUALITY}")
 
                             # Add to document (max width 5.5 inches for better margins)
                             LOGGER.info("Adding picture to document...")
