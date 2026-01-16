@@ -1,0 +1,234 @@
+{
+  "common": {
+    "appName": "TravelerAI",
+    "tagline": "Solutions de Voyage avec IA",
+    "getStarted": "Commencer",
+    "startOver": "Recommencer",
+    "poweredBy": "Propulsé par LangGraph et agents IA"
+  },
+  "travelerHome": {
+    "title": "Solutions IA pour des Voyages plus Intelligents",
+    "subtitle": "Découvrez notre suite d'outils alimentés par l'IA conçus pour rendre la planification de voyages facile et agréable.",
+    "solutions": {
+      "title": "Nos Solutions",
+      "itinerary": {
+        "title": "Itinerary Generator",
+        "description": "Transformez vos plans de voyage en itinéraires professionnels jour par jour avec images, cartes, liens de billets et estimations de coûts.",
+        "cta": "Créer un Itinéraire"
+      },
+      "comingSoon": {
+        "title": "Bientôt Disponible",
+        "description": "Nous travaillons sur d'autres outils de voyage avec IA. Restez à l'écoute pour des nouveautés!"
+      }
+    },
+    "whyChoose": {
+      "title": "Pourquoi Choisir TravelerAI?",
+      "description": "Nous combinons une technologie IA de pointe avec une expertise en voyages pour offrir des solutions qui économisent du temps et améliorent vos expériences.",
+      "feature1": {
+        "title": "Powered by IA",
+        "description": "Des modèles de langage avancés qui comprennent vos préférences et optimisent chaque détail."
+      },
+      "feature2": {
+        "title": "Gain de Temps",
+        "description": "Ce qui prend des heures de recherche, notre IA le complète en minutes avec de meilleurs résultats."
+      },
+      "feature3": {
+        "title": "Multi-Langues",
+        "description": "Générez du contenu en anglais, portugais, espagnol ou français."
+      }
+    }
+  },
+  "home": {
+    "solutionName": "Itinerary Generator",
+    "title": "Transformez Vos Plans de Voyage en Itinéraires Parfaits",
+    "subtitle": "Arrêtez de passer des heures à planifier. Listez simplement où vous voulez aller et notre IA crée un itinéraire professionnel jour par jour avec images, cartes, liens de billets et estimations de coûts - en quelques minutes.",
+    "cta": "Créer Mon Itinéraire",
+    "features": {
+      "smartOrganization": {
+        "title": "Planification Intelligente d'Itinéraires",
+        "description": "Notre IA regroupe les attractions proches, minimisant le temps de trajet et maximisant votre expérience à chaque destination."
+      },
+      "richContent": {
+        "title": "Informations Complètes",
+        "description": "Descriptions détaillées, images magnifiques, liens directs pour acheter des billets et estimations précises des coûts pour chaque attraction."
+      },
+      "multiLanguage": {
+        "title": "Votre Langue, Votre Choix",
+        "description": "Générez des itinéraires en anglais, portugais, espagnol ou français - partagez-les facilement avec vos compagnons de voyage."
+      }
+    },
+    "howItWorks": {
+      "title": "Comment Ça Marche",
+      "step1": {
+        "title": "Listez Vos Destinations de Rêve",
+        "description": "Tapez simplement les attractions que vous souhaitez visiter. Ajoutez des notes comme 'Tour Eiffel et cafés à proximité' ou précisez quel jour vous préférez chaque lieu."
+      },
+      "step2": {
+        "title": "L'IA Crée Votre Plan Parfait",
+        "description": "Nos agents intelligents analysent les emplacements, optimisent les itinéraires et recherchent des informations détaillées pour chaque attraction - tout automatiquement."
+      },
+      "step3": {
+        "title": "Téléchargez Votre Itinéraire Professionnel",
+        "description": "Obtenez un document magnifiquement formaté avec des horaires jour par jour, des images de haute qualité, des cartes interactives et tout ce dont vous avez besoin."
+      }
+    },
+    "interactiveFlow": {
+      "title": "Vous Gardez le Contrôle",
+      "description": "Lorsque vous ne spécifiez pas de préférences de jours, notre IA regroupe les attractions par emplacement pour minimiser le temps de trajet. Avant de continuer, vous révisez et approuvez l'organisation proposée - ou demandez des modifications jusqu'à ce que ce soit exactement comme vous le voulez.",
+      "note": "Si vous spécifiez des jours pour toutes les attractions (ex: 'Jour 1: Louvre'), l'IA suit directement votre plan sans avoir besoin d'approbation.",
+      "steps": {
+        "input": "Votre Liste",
+        "ai": "L'IA Optimise",
+        "approval": "Vous Révisez",
+        "research": "L'IA Recherche",
+        "document": "Terminé!"
+      }
+    },
+    "example": {
+      "title": "Voyez-le en Action",
+      "subtitle": "D'une simple liste à un document de voyage professionnel",
+      "input": {
+        "title": "Votre Entrée",
+        "content": "Rome\n\nJour 1:\n- Colisée\n- Forum Romain\n- Mont Palatin\n\nJour 2:\n- Fontaine de Trevi\n- Place d'Espagne\n- Panthéon\n\nJour 3:\n- Place Saint-Pierre\n- Basilique Saint-Pierre\n- Musées du Vatican"
+      },
+      "output": {
+        "title": "Itinéraire Généré",
+        "ticketInfo": "Informations Billets",
+        "usefulLinks": "Liens Utiles",
+        "estimatedCost": "Coût Estimé",
+        "perPerson": "personne",
+        "moreAttractions": "autres attractions",
+        "days": {
+          "1": {
+            "title": "Jour 1 - Rome Antique",
+            "colosseum": {
+              "name": "Colisée",
+              "description": "L'emblématique amphithéâtre antique qui accueillait autrefois les combats de gladiateurs. Construit entre 70-80 après J.-C., il pouvait accueillir jusqu'à 80 000 spectateurs.",
+              "ticketInfo": "Billet combiné avec Forum Romain et Mont Palatin",
+              "ticketPrice": "€18",
+              "links": ["Site officiel", "Billets coupe-file"],
+              "cost": "€18"
+            },
+            "forum": {
+              "name": "Forum Romain",
+              "description": "Le cœur de la Rome antique, avec les ruines d'importants bâtiments gouvernementaux, temples et espaces publics.",
+              "ticketInfo": "Inclus dans le billet combiné du Colisée",
+              "ticketPrice": "Inclus",
+              "links": ["Visite virtuelle", "Guide historique"],
+              "cost": "€0"
+            }
+          },
+          "2": {
+            "title": "Jour 2 - Centre Historique",
+            "trevi": {
+              "name": "Fontaine de Trevi",
+              "description": "Chef-d'œuvre baroque et plus grande fontaine de Rome. La tradition veut que lancer une pièce garantisse votre retour à Rome.",
+              "ticketInfo": "Entrée gratuite",
+              "ticketPrice": "Gratuit",
+              "links": ["Meilleurs horaires de visite", "Restaurants à proximité"],
+              "cost": "€0"
+            },
+            "pantheon": {
+              "name": "Panthéon",
+              "description": "Temple romain antique avec la plus grande coupole en béton non armé du monde, aujourd'hui une église abritant le tombeau de Raphaël.",
+              "ticketInfo": "Réservation obligatoire",
+              "ticketPrice": "€5",
+              "links": ["Réserver", "Audioguide"],
+              "cost": "€5"
+            }
+          },
+          "3": {
+            "title": "Jour 3 - Cité du Vatican",
+            "vatican": {
+              "name": "Musées du Vatican",
+              "description": "L'une des plus grandes collections d'art au monde, culminant avec la magnifique Chapelle Sixtine et le plafond de Michel-Ange.",
+              "ticketInfo": "Réservation anticipée fortement recommandée",
+              "ticketPrice": "€17",
+              "links": ["Billets officiels", "Visites guidées"],
+              "cost": "€17"
+            },
+            "stpeters": {
+              "name": "Basilique Saint-Pierre",
+              "description": "La plus grande église du monde et centre du christianisme, avec la Pietà de Michel-Ange et une architecture Renaissance époustouflante.",
+              "ticketInfo": "Entrée gratuite à la basilique",
+              "ticketPrice": "Gratuit",
+              "links": ["Billets montée au dôme", "Code vestimentaire"],
+              "cost": "€0"
+            }
+          }
+        }
+      }
+    }
+  },
+  "form": {
+    "title": "Créez Votre Itinéraire",
+    "description": "Entrez les attractions que vous souhaitez visiter et nous créerons un itinéraire de voyage personnalisé pour vous.",
+    "attractions": {
+      "label": "Attractions à Visiter",
+      "placeholder": "Entrez les attractions que vous souhaitez visiter...\n\nExemple:\nTour Eiffel et environs\nMusée du Louvre\nChâteau de Versailles",
+      "error": "Veuillez entrer au moins une attraction"
+    },
+    "preferences": {
+      "label": "Préférences (optionnel)",
+      "placeholder": "Âge, intérêts, préférences d'organisation des jours...\n\nExemple: J'ai 30 ans. Le premier jour je préfère les musées."
+    },
+    "numDays": {
+      "label": "Nombre de Jours",
+      "errorMin": "Minimum 1 jour",
+      "errorMax": "Maximum 14 jours"
+    },
+    "language": {
+      "label": "Langue du Document"
+    },
+    "email": {
+      "label": "Envoyer l'itinéraire par email",
+      "placeholder": "votre@email.com",
+      "error": "Email invalide"
+    },
+    "submit": "Générer l'Itinéraire",
+    "submitting": "Démarrage..."
+  },
+  "progress": {
+    "title": "Génération de Votre Itinéraire",
+    "description": "Cela peut prendre quelques minutes. Veuillez ne pas fermer cette page.",
+    "steps": {
+      "dayOrganizer": "Organisation des attractions par jour",
+      "attractionResearcher": "Recherche des détails des attractions",
+      "buildDocument": "Génération du document",
+      "finalize": "Finalisation de l'itinéraire"
+    }
+  },
+  "results": {
+    "title": "Votre Itinéraire Est Prêt !",
+    "description": "Votre itinéraire de voyage personnalisé a été généré avec succès.",
+    "costs": {
+      "title": "Coûts Estimés (par personne)"
+    },
+    "download": "Télécharger l'Itinéraire (DOCX)",
+    "preview": "Aperçu de l'Itinéraire",
+    "emailSent": "Itinéraire envoyé par email",
+    "emailFailed": "Échec de l'envoi de l'email",
+    "createAnother": "Créer un Autre Itinéraire"
+  },
+  "error": {
+    "title": "Échec de la Génération",
+    "description": "Une erreur s'est produite lors de la génération de votre itinéraire.",
+    "retry": "Réessayer",
+    "connectionLost": "Connexion perdue. Veuillez réessayer."
+  },
+  "approval": {
+    "title": "Vérifiez Votre Itinéraire",
+    "description": "L'IA a organisé vos attractions. Veuillez vérifier et approuver ou demander des modifications.",
+    "day": "Jour",
+    "approve": "Approuver",
+    "requestChanges": "Demander des Modifications",
+    "placeholder": "Décrivez les modifications souhaitées (ex: 'déplacer le Louvre au jour 2', 'échanger jour 1 et jour 3')...",
+    "submitting": "Envoi en cours..."
+  },
+  "languages": {
+    "en": "Anglais",
+    "pt-br": "Portugais (Brésil)",
+    "es": "Espagnol",
+    "fr": "Français"
+  }
+}

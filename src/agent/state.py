@@ -4,6 +4,10 @@ import operator
 import numpy
 
 
+def bool_operator(a: bool, b: bool) -> bool:
+    """Custom operator to combine boolean flags using logical OR."""
+    return a or b
+
 # ============================================================================
 # TypedDict Models for Structured Outputs
 # ============================================================================
@@ -90,7 +94,7 @@ class GraphState(TypedDict):
     has_flexible_attractions: bool  # True if K-means was used (not all predefined)
 
     # Itinerary approval (for flexible attractions)
-    itinerary_approved: bool  # True when user approves the organization
+    itinerary_approved: Annotated[bool, bool_operator]  # True when user approves the organization
     user_feedback: str  # User's feedback if they request changes
 
     # Second agent outputs (accumulated from parallel executions - one per day)
@@ -104,3 +108,6 @@ class GraphState(TypedDict):
     # Final outputs
     costs_by_currency: Dict[str, float]  # {currency_code: total_cost} e.g. {"EUR": 150.0, "USD": 50.0}
     final_document_path: str
+
+    # API mode flag (for web UI vs CLI)
+    api_mode: bool  # True when running from API, enables interrupt propagation to outer graph

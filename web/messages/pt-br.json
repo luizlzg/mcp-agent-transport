@@ -1,0 +1,234 @@
+{
+  "common": {
+    "appName": "TravelerAI",
+    "tagline": "Soluções de Viagem com IA",
+    "getStarted": "Começar",
+    "startOver": "Recomeçar",
+    "poweredBy": "Desenvolvido com LangGraph e agentes de IA"
+  },
+  "travelerHome": {
+    "title": "Soluções de IA para Viagens mais Inteligentes",
+    "subtitle": "Descubra nossa suíte de ferramentas com IA projetadas para tornar o planejamento de viagens fácil e agradável.",
+    "solutions": {
+      "title": "Nossas Soluções",
+      "itinerary": {
+        "title": "Itinerary Generator",
+        "description": "Transforme seus planos de viagem em roteiros profissionais dia a dia com imagens, mapas, links de ingressos e estimativas de custos.",
+        "cta": "Criar Roteiro"
+      },
+      "comingSoon": {
+        "title": "Em Breve",
+        "description": "Estamos trabalhando em mais ferramentas de viagem com IA. Fique ligado para novidades!"
+      }
+    },
+    "whyChoose": {
+      "title": "Por que Escolher TravelerAI?",
+      "description": "Combinamos tecnologia de IA de ponta com expertise em viagens para entregar soluções que economizam seu tempo e melhoram suas experiências.",
+      "feature1": {
+        "title": "Powered by IA",
+        "description": "Modelos de linguagem avançados que entendem suas preferências e otimizam cada detalhe."
+      },
+      "feature2": {
+        "title": "Economia de Tempo",
+        "description": "O que leva horas de pesquisa, nossa IA completa em minutos com resultados melhores."
+      },
+      "feature3": {
+        "title": "Multi-Idiomas",
+        "description": "Gere conteúdo em inglês, português, espanhol ou francês."
+      }
+    }
+  },
+  "home": {
+    "solutionName": "Itinerary Generator",
+    "title": "Transforme Seus Planos de Viagem em Roteiros Perfeitos",
+    "subtitle": "Pare de gastar horas planejando. Basta listar onde quer ir e nossa IA cria um roteiro profissional dia a dia com imagens, mapas, links de ingressos e estimativas de custo - em minutos.",
+    "cta": "Criar Meu Roteiro",
+    "features": {
+      "smartOrganization": {
+        "title": "Planejamento Inteligente de Rotas",
+        "description": "Nossa IA agrupa atrações próximas, minimizando tempo de deslocamento e maximizando sua experiência em cada destino."
+      },
+      "richContent": {
+        "title": "Informações Completas",
+        "description": "Descrições detalhadas, imagens incríveis, links diretos para compra de ingressos e estimativas precisas de custos para cada atração."
+      },
+      "multiLanguage": {
+        "title": "Seu Idioma, Sua Escolha",
+        "description": "Gere roteiros em inglês, português, espanhol ou francês - compartilhe facilmente com seus companheiros de viagem."
+      }
+    },
+    "howItWorks": {
+      "title": "Como Funciona",
+      "step1": {
+        "title": "Liste Seus Destinos dos Sonhos",
+        "description": "Simplesmente digite as atrações que deseja visitar. Adicione notas como 'Torre Eiffel e cafés próximos' ou especifique qual dia prefere cada lugar."
+      },
+      "step2": {
+        "title": "A IA Cria Seu Plano Perfeito",
+        "description": "Nossos agentes inteligentes analisam localizações, otimizam rotas e pesquisam informações detalhadas de cada atração - tudo automaticamente."
+      },
+      "step3": {
+        "title": "Baixe Seu Roteiro Profissional",
+        "description": "Receba um documento lindamente formatado com cronograma dia a dia, imagens de alta qualidade, mapas interativos e tudo que você precisa."
+      }
+    },
+    "interactiveFlow": {
+      "title": "Você Mantém o Controle",
+      "description": "Quando você não especifica preferências de dias, nossa IA agrupa atrações por localização para minimizar o tempo de deslocamento. Antes de prosseguir, você revisa e aprova a organização proposta - ou solicita alterações até ficar exatamente como você quer.",
+      "note": "Se você especificar dias para todas as atrações (ex: 'Dia 1: Louvre'), a IA segue seu plano diretamente sem precisar de aprovação.",
+      "steps": {
+        "input": "Sua Lista",
+        "ai": "IA Otimiza",
+        "approval": "Você Revisa",
+        "research": "IA Pesquisa",
+        "document": "Pronto!"
+      }
+    },
+    "example": {
+      "title": "Veja na Prática",
+      "subtitle": "De uma simples lista para um documento de viagem profissional",
+      "input": {
+        "title": "Sua Entrada",
+        "content": "Roma\n\nDia 1:\n- Coliseu\n- Fórum Romano\n- Monte Palatino\n\nDia 2:\n- Fontana de Trevi\n- Piazza Spagna\n- Panteão\n\nDia 3:\n- Praça de São Pedro\n- Basílica de São Pedro\n- Museus do Vaticano"
+      },
+      "output": {
+        "title": "Roteiro Gerado",
+        "ticketInfo": "Informações de Ingresso",
+        "usefulLinks": "Links Úteis",
+        "estimatedCost": "Custo Estimado",
+        "perPerson": "pessoa",
+        "moreAttractions": "mais atrações",
+        "days": {
+          "1": {
+            "title": "Dia 1 - Roma Antiga",
+            "colosseum": {
+              "name": "Coliseu",
+              "description": "O icônico anfiteatro antigo que já abrigou combates de gladiadores. Construído entre 70-80 d.C., podia acomodar até 80.000 espectadores.",
+              "ticketInfo": "Ingresso combinado com Fórum Romano e Monte Palatino",
+              "ticketPrice": "€18",
+              "links": ["Site oficial", "Ingressos sem fila"],
+              "cost": "€18"
+            },
+            "forum": {
+              "name": "Fórum Romano",
+              "description": "O coração da Roma antiga, com ruínas de importantes prédios governamentais, templos e espaços públicos.",
+              "ticketInfo": "Incluído no ingresso combinado do Coliseu",
+              "ticketPrice": "Incluído",
+              "links": ["Tour virtual", "Guia histórico"],
+              "cost": "€0"
+            }
+          },
+          "2": {
+            "title": "Dia 2 - Centro Histórico",
+            "trevi": {
+              "name": "Fontana de Trevi",
+              "description": "Obra-prima barroca e a maior fonte de Roma. A tradição diz que jogar uma moeda garante seu retorno a Roma.",
+              "ticketInfo": "Entrada gratuita",
+              "ticketPrice": "Grátis",
+              "links": ["Melhores horários para visitar", "Restaurantes próximos"],
+              "cost": "€0"
+            },
+            "pantheon": {
+              "name": "Panteão",
+              "description": "Templo romano antigo com a maior cúpula de concreto não armado do mundo, hoje uma igreja que abriga o túmulo de Rafael.",
+              "ticketInfo": "Reserva obrigatória",
+              "ticketPrice": "€5",
+              "links": ["Fazer reserva", "Áudio guia"],
+              "cost": "€5"
+            }
+          },
+          "3": {
+            "title": "Dia 3 - Cidade do Vaticano",
+            "vatican": {
+              "name": "Museus do Vaticano",
+              "description": "Uma das maiores coleções de arte do mundo, culminando na magnífica Capela Sistina com o teto de Michelangelo.",
+              "ticketInfo": "Reserva antecipada altamente recomendada",
+              "ticketPrice": "€17",
+              "links": ["Ingressos oficiais", "Tours guiados"],
+              "cost": "€17"
+            },
+            "stpeters": {
+              "name": "Basílica de São Pedro",
+              "description": "A maior igreja do mundo e centro do cristianismo, com a Pietà de Michelangelo e impressionante arquitetura renascentista.",
+              "ticketInfo": "Entrada gratuita para a basílica",
+              "ticketPrice": "Grátis",
+              "links": ["Ingressos para subir na cúpula", "Código de vestimenta"],
+              "cost": "€0"
+            }
+          }
+        }
+      }
+    }
+  },
+  "form": {
+    "title": "Crie Seu Roteiro",
+    "description": "Insira as atrações que deseja visitar e criaremos um roteiro de viagem personalizado para você.",
+    "attractions": {
+      "label": "Atrações a Visitar",
+      "placeholder": "Insira as atrações que deseja visitar...\n\nExemplo:\nTorre Eiffel e arredores\nMuseu do Louvre\nPalácio de Versalhes",
+      "error": "Por favor, insira pelo menos uma atração"
+    },
+    "preferences": {
+      "label": "Preferências (opcional)",
+      "placeholder": "Idade, interesses, preferências de organização dos dias...\n\nExemplo: Tenho 30 anos. No primeiro dia prefiro museus."
+    },
+    "numDays": {
+      "label": "Número de Dias",
+      "errorMin": "Mínimo 1 dia",
+      "errorMax": "Máximo 14 dias"
+    },
+    "language": {
+      "label": "Idioma do Documento"
+    },
+    "email": {
+      "label": "Enviar roteiro para meu email",
+      "placeholder": "seu@email.com",
+      "error": "Email inválido"
+    },
+    "submit": "Gerar Roteiro",
+    "submitting": "Iniciando..."
+  },
+  "progress": {
+    "title": "Gerando Seu Roteiro",
+    "description": "Isso pode levar alguns minutos. Por favor, não feche esta página.",
+    "steps": {
+      "dayOrganizer": "Organizando atrações por dia",
+      "attractionResearcher": "Pesquisando detalhes das atrações",
+      "buildDocument": "Gerando documento",
+      "finalize": "Finalizando roteiro"
+    }
+  },
+  "results": {
+    "title": "Seu Roteiro Está Pronto!",
+    "description": "Seu roteiro de viagem personalizado foi gerado com sucesso.",
+    "costs": {
+      "title": "Custos Estimados (por pessoa)"
+    },
+    "download": "Baixar Roteiro (DOCX)",
+    "preview": "Visualizar Roteiro",
+    "emailSent": "Roteiro enviado para seu email",
+    "emailFailed": "Falha ao enviar email",
+    "createAnother": "Criar Outro Roteiro"
+  },
+  "error": {
+    "title": "Falha na Geração",
+    "description": "Algo deu errado ao gerar seu roteiro.",
+    "retry": "Tentar Novamente",
+    "connectionLost": "Conexão perdida. Por favor, tente novamente."
+  },
+  "approval": {
+    "title": "Revise Seu Roteiro",
+    "description": "A IA organizou suas atrações. Por favor, revise e aprove ou solicite alterações.",
+    "day": "Dia",
+    "approve": "Aprovar",
+    "requestChanges": "Solicitar Alterações",
+    "placeholder": "Descreva as alterações desejadas (ex: 'mover Louvre para o dia 2', 'trocar dia 1 e dia 3')...",
+    "submitting": "Enviando..."
+  },
+  "languages": {
+    "en": "Inglês",
+    "pt-br": "Português (Brasil)",
+    "es": "Espanhol",
+    "fr": "Francês"
+  }
+}

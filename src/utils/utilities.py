@@ -1,3 +1,6 @@
+import matplotlib
+# Use a non-GUI backend to avoid creating NSWindow on non-main threads (macOS)
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from shapely.geometry import Point

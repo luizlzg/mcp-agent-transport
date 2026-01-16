@@ -127,6 +127,18 @@ def send_itinerary_email_sync(
             "error": f"Document not found: {document_path}",
         }
 
+    # Check file size before sending (Gmail limit is ~25MB, but base64 adds ~33%)
+    MAX_ATTACHMENT_SIZE_MB = 20
+    file_size = doc_path.stat().st_size
+    file_size_mb = file_size / (1024 * 1024)
+
+    if file_size_mb > MAX_ATTACHMENT_SIZE_MB:
+        LOGGER.warning(f"Document too large for email: {file_size_mb:.1f}MB")
+        return {
+            "success": False,
+            "error": f"Document is too large ({file_size_mb:.1f}MB). Maximum email attachment size is {MAX_ATTACHMENT_SIZE_MB}MB. Please download the document directly.",
+        }
+
     # Get SMTP settings
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))

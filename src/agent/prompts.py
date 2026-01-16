@@ -249,7 +249,7 @@ Before starting, check if the input is valid:
    - Repeat until approved
 
 5. **Build the final structure**:
-   - Create a creative title
+   - Create a creative title, using the following language: {language}.
    - Use the user's ORIGINAL names in the output
    - **FOLLOW EXACTLY** the division and order returned by the 'organize_attractions_by_days' tool
    - DO NOT change the order or reorganize attractions - the tool already optimized this
@@ -382,7 +382,7 @@ organize_attractions_by_days(
 2. **RESPECT THE INTENT**: Isolated attractions MUST stay alone on their day.
 3. **NUMBER OF DAYS**: Organize in EXACTLY {num_days} days.
 4. **PRESERVE USER'S LANGUAGE**: Use original_name with user's names in search_place_address.
-5. **CREATIVE TITLE**: Create a title based on the location and main attractions.
+5. **CREATIVE TITLE**: Create a title based on the location and main attractions, using the following language: {language}.
 6. **DON'T RESEARCH DETAILS**: Another agent handles tickets, schedules, costs.
 7. **COORDINATES FIRST**: Get all coordinates before calling organize_attractions_by_days.
 8. **CALL ONCE**: Call organize_attractions_by_days EXACTLY ONCE with all parameters ready.

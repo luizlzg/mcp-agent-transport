@@ -19,7 +19,7 @@ from src.agent.other_nodes import assign_workers_node, build_document_node
 from src.utils.logger import LOGGER
 
 
-def build_graph() -> StateGraph:
+def build_graph(checkpointer=None) -> StateGraph:
     """
     Build and compile the multi-agent itinerary generation graph.
 
@@ -30,6 +30,9 @@ def build_graph() -> StateGraph:
     The assign_workers_node checks for invalid input and either:
     - Routes to END if invalid
     - Creates Send() calls for parallel attraction research if valid
+
+    Args:
+        checkpointer: Optional checkpointer for state persistence and interrupt support
 
     Returns:
         Compiled StateGraph ready for execution
@@ -63,7 +66,7 @@ def build_graph() -> StateGraph:
     # End after document is built
     workflow.add_edge("build_document_node", END)
 
-    # Compile graph
-    graph = workflow.compile()
+    # Compile graph with optional checkpointer
+    graph = workflow.compile(checkpointer=checkpointer)
     LOGGER.info("Graph compiled successfully")
     return graph
