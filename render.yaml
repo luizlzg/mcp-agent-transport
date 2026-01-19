@@ -20,8 +20,9 @@ services:
   - type: web
     name: travelerai-web
     runtime: node
-    buildCommand: cd web && npm install && npm run build
-    startCommand: cd web && npm start
+    rootDir: web
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     envVars:
       - key: NODE_VERSION
         value: "20"
