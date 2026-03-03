@@ -11,7 +11,7 @@ import os
 from typing import Any, Dict, Optional, Callable
 from langchain.agents.middleware import AgentMiddleware
 from src.utils.logger import LOGGER
-from src.agent.tools import _check_url_accessible
+from src.itinerary_generator.tools import _check_url_accessible
 
 
 class StructuredOutputValidationError(Exception):
@@ -94,7 +94,7 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
         # Check for empty required fields
         empty_fields = []
         for key, value in output.items():
-            if key in self.expected_schema:
+            if key in self.expected_schema.__annotations__:
                 # Check if required list/string fields are empty
                 if isinstance(value, (list, str)) and not value:
                     empty_fields.append(key)
@@ -419,7 +419,7 @@ class ClusteringToolValidatorMiddleware(AgentMiddleware):
     def __init__(self):
         """Initialize the middleware."""
         self.max_retries = int(os.getenv("STRUCTURED_OUTPUT_MAX_RETRIES", "3"))
-        self.valid_clustering_tools = ["organize_attractions_by_days"]
+        self.valid_clustering_tools = ["finalize_day_organization"]
         self.approval_tools = ["request_itinerary_approval"]
         self.error_handling_tools = ["return_invalid_input_error"]
         LOGGER.info(
@@ -481,11 +481,13 @@ class ClusteringToolValidatorMiddleware(AgentMiddleware):
 ATTENTION: You didn't use the organization tool.
 
 You MUST use one of the following tools:
-- 'organize_attractions_by_days': To organize attractions by days (valid input)
+- 'finalize_day_organization': To organize attractions by days (valid input) - call classify_attractions first
 - 'return_invalid_input_error': To return an error message (invalid/unrelated input)
 
 If the input contains tourist attractions:
-1. Use 'organize_attractions_by_days' to organize the attractions
+1. Call 'classify_attractions' to classify each attraction
+2. Optionally call 'configure_route_optimization' for distance optimization
+3. Call 'finalize_day_organization' to execute the organization
 
 If the input is empty, unrelated, or doesn't contain attractions:
 1. Use 'return_invalid_input_error' with an explanatory message

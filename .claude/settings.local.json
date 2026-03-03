@@ -31,7 +31,12 @@
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(tree:*)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:blog.stackademic.com)",
+      "WebFetch(domain:dev.to)",
+      "Bash(source:*)"
     ],
     "deny": [],
     "ask": []
