@@ -139,33 +139,14 @@ class StructuredOutputValidatorMiddleware(AgentMiddleware):
             messages = state.get("messages", [])
 
             # Create error feedback message asking the agent to generate structured output
-            error_feedback_message = f"""
-CRITICAL: You have NOT generated the required structured output yet!
+            error_feedback_message = """
+CRITICAL: You have NOT called the DayResearchResult tool function yet!
 
-After completing your research with the tools, you MUST generate the final DayResearchResult structure.
+You MUST make a TOOL CALL to DayResearchResult with all your research data.
+Do NOT output JSON as plain text — use the actual DayResearchResult function/tool call.
 
-{{
-  "attractions": [
-    {{
-      "name": "Attraction Name",
-      "day_number": 1,
-      "description": "Detailed 150-300 word description...",
-      "images": [
-        {{"id": "img1", "url_regular": "https://...", "caption": "Description of image"}}
-      ],
-      "ticket_info": [
-        {{"title": "Ticket Type", "content": "Price details", "url": "https://official-site.com/tickets"}}
-      ],
-      "useful_links": [
-        {{"title": "Official Site", "url": "https://..."}}
-      ],
-      "estimated_cost": 25.0,
-      "currency": "EUR"
-    }}
-  ]
-}}
-
-Generate this structured output NOW based on the research you already did.
+If you already did the research, call DayResearchResult NOW with that data.
+If you have not researched yet, use search_attraction_info and search_attraction_images first, then call DayResearchResult.
 """
 
             # Raise error with messages - agent definition will handle retry
@@ -366,11 +347,15 @@ def validate_day_research_result(output: Dict[str, Any], state: Dict[str, Any] =
             # Check if URL is accessible
             is_accessible, error_message = _check_url_accessible(url)
             if not is_accessible:
-                ticket_title = info.get("title", "Unknown")
-                return False, (
-                    f"Ticket link for '{attraction_name}' ({ticket_title}) is broken: {url} - {error_message}. "
-                    f"Use search_ticket_link with a different query to find a working official ticket URL."
-                )
+                # HTTP 403 means anti-bot protection — the URL is valid for real users
+                if "HTTP 403" in error_message:
+                    LOGGER.info(f"ℹ️ Ticket URL returns 403 (bot protection, URL likely valid for users): {url}")
+                else:
+                    ticket_title = info.get("title", "Unknown")
+                    return False, (
+                        f"Ticket link for '{attraction_name}' ({ticket_title}) is broken: {url} - {error_message}. "
+                        f"Use search_ticket_link with a different query to find a working official ticket URL."
+                    )
 
     # Check all attractions for this day were documented (if state provided)
     if state:

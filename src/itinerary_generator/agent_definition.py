@@ -575,6 +575,7 @@ Remember to:
 
     # Retry loop
     retry_count = 0
+    no_structured_response_count = 0  # Track consecutive "No structured_response" failures
 
     while retry_count <= max_retries:
         try:
@@ -637,9 +638,26 @@ Remember to:
             LOGGER.warning(f"{log_prefix} | ⚠️ Validation failed (attempt {retry_count}/{max_retries + 1}): {e}")
             LOGGER.info(f"{log_prefix} | Retrying with error feedback")
 
-            # Use all messages from the failed attempt (from middleware) + error feedback
             state = e.state
-            messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
+            error_msg = str(e)
+
+            if "No structured_response found in state" in error_msg:
+                no_structured_response_count += 1
+                if no_structured_response_count > 3:
+                    # After 3 failed attempts with full history, the model is stuck thinking it
+                    # already submitted. Reset to a clean context to force a fresh tool call.
+                    LOGGER.info(f"{log_prefix} | Resetting message history after {no_structured_response_count} consecutive 'No structured_response' failures")
+                    messages = [HumanMessage(content=message_content), HumanMessage(content=e.error_feedback_message)]
+                else:
+                    # Keep the full history for the first 3 attempts — the model may still
+                    # self-correct with the right nudge.
+                    messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
+            else:
+                # For other errors (ticket link, missing attractions, etc.), keep the full history
+                # so the model can see what it already researched and fix only what's broken.
+                no_structured_response_count = 0
+                messages = e.messages + [HumanMessage(content=e.error_feedback_message)]
+
             state["messages"] = messages
 
         except Exception as e:
