@@ -47,3 +47,4 @@ contextily==1.7.0
 shapely==2.1.2
 matplotlib==3.10.7
 adjustText>=0.8  # For non-overlapping map labels
+colorama==0.4.6

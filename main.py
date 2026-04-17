@@ -1,21 +1,30 @@
 """
-Main CLI entry point for the Itinerary Document Generator.
+Main CLI entry point for the Itinerary Document Generator and Transport Optimizer.
 
-This is a multi-agent LangGraph system that creates travel itinerary documents
-with images, costs, and ticket links in the user's preferred language.
+This is a multi-agent LangGraph system with two main features:
 
-Uses two specialized agents:
-1. Day Organizer - organizes attractions by days using K-means clustering
-2. Attraction Researcher - researches details for each attraction (parallel execution)
+1. Itinerary Generator - Creates travel itinerary documents
+   - Day Organizer: organizes attractions by days using K-means clustering
+   - Attraction Researcher: researches details for each attraction (parallel execution)
+
+2. Transport Optimizer - Optimizes city transport routes
+   - Route Collector: gathers route pairs from user conversation
+   - Transport Researcher: researches transport options and collects preferences
+   - Cost Calculator: calculates costs and generates PDF summary
 """
+import asyncio
 import os
 import sys
+from uuid import uuid4
 from dotenv import load_dotenv
+from colorama import Fore, Style
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from langgraph.types import Command
-from src.agent.graph import build_graph
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from src.itinerary_generator.graph import build_graph
 from src.processor.email_processor import check_email_config, send_itinerary_email_sync
 from src.utils.observability import setup_langsmith_tracing
 
@@ -34,6 +43,21 @@ SUPPORTED_LANGUAGES = {
     "pt-br": "Portuguese (Brazil)",
     "es": "Spanish",
     "fr": "French",
+}
+
+# Friendly tool messages
+TOOL_MESSAGES = {
+    "search_place_coordinates": "📍 Searching for location...",
+    "register_route_pair": "✅ Registering route...",
+    "confirm_route_pairs": "📋 Confirming routes...",
+    "get_transport_options": "🚇 Checking transport options...",
+    "register_user_preference": "💾 Saving your preference...",
+    "finish_transport_research": "✨ Finishing transport research...",
+    "search_transport_information": "🔎 Researching transport prices...",
+    "route_reasoning": "🤔 Analyzing route...",
+    "register_route_cost": "💰 Registering cost...",
+    "register_payment_methods": "💳 Saving payment methods...",
+    "finish_interaction": "📄 Generating PDF...",
 }
 
 
@@ -166,6 +190,221 @@ def get_language() -> str:
         console.print("[yellow]Please select a valid language code.[/yellow]")
 
 
+def check_transport_optimizer_env():
+    """Check if transport optimizer environment is configured."""
+    issues = []
+
+    # Check Google Maps API
+    if not os.getenv("GOOGLE_MAPS_API_KEY"):
+        issues.append("GOOGLE_MAPS_API_KEY not configured (required for transport directions)")
+    else:
+        console.print("Google Maps API configured", style="green")
+
+    # Check Serper (required for pricing research)
+    if not os.getenv("SERPER_API_KEY"):
+        issues.append("SERPER_API_KEY not configured (required for pricing research)")
+
+    # Check LLM API
+    if not os.getenv("OPENROUTER_API_KEY"):
+        issues.append("OPENROUTER_API_KEY not configured (required for agent LLM)")
+
+    if issues:
+        console.print("\n[bold yellow]Transport Optimizer Configuration Issues:[/bold yellow]")
+        for issue in issues:
+            console.print(f"  {issue}")
+        return False
+
+    return True
+
+
+def run_transport_optimizer():
+    """Run the transport optimizer chat interface."""
+    console.print("\n" + "="*60)
+    console.print("[bold bright_blue]Mode: Transport Optimizer[/bold bright_blue]")
+    console.print("="*60)
+
+    # Check environment
+    if not check_transport_optimizer_env():
+        console.print("\n[yellow]Transport optimizer is not fully configured.[/yellow]")
+        console.print("[dim]Add the missing API keys to your .env file.[/dim]\n")
+        return
+
+    # Get output language
+    console.print("\n[bold cyan]Select the output language:[/bold cyan]")
+    for code, name in SUPPORTED_LANGUAGES.items():
+        console.print(f"  {code}: {name}")
+
+    language = Prompt.ask(
+        "\n[bold cyan]Language code[/bold cyan]",
+        default="en",
+        choices=list(SUPPORTED_LANGUAGES.keys())
+    )
+
+    try:
+        # Import and build graph
+        from src.transport_optimizer.graph import build_transport_optimizer_graph, get_initial_state
+
+        console.print("\n[dim]Initializing transport optimizer...[/dim]")
+        checkpointer = MemorySaver()
+        graph = build_transport_optimizer_graph(checkpointer=checkpointer)
+
+        console.print("Transport optimizer ready!\n", style="green")
+        console.print("[dim]Agents:[/dim]")
+        console.print("[dim]  -> Route Collector: Gathers your route pairs[/dim]")
+        console.print("[dim]  -> Transport Researcher: Finds transport options[/dim]")
+        console.print("[dim]  -> Cost Calculator: Calculates costs and generates PDF[/dim]\n")
+
+        # Initialize state
+        config = {
+            "configurable": {"thread_id": str(uuid4())},
+            "recursion_limit": 100,
+        }
+
+        initial_state = get_initial_state(language=language)
+
+        console.print("[bold cyan]Transport Optimizer[/bold cyan]")
+        console.print("[dim]Tell me about your route. Example: 'I want to go from Eiffel Tower to Louvre, then to Notre Dame'[/dim]")
+        console.print("[dim]Type 'quit' to exit.[/dim]\n")
+
+        # Chat loop
+        current_state = initial_state
+        seen_content = set()
+
+        while True:
+            try:
+                # Ask for input when: no messages yet (first iteration) OR agent expects it (next_agent == "end")
+                has_messages = bool(current_state.get("messages"))
+                waiting_for_input = current_state.get("next_agent", "end") == "end"
+
+                if not has_messages or waiting_for_input:
+                    user_input = Prompt.ask("\n\n[bold green]You[/bold green]")
+
+                    if user_input.lower().strip() in ['quit', 'exit', 'q']:
+                        console.print("\n[bold green]Goodbye! Have a great trip![/bold green]")
+                        break
+
+                    if not user_input.strip():
+                        continue
+
+                    # Add user message to state
+                    current_state["messages"] = current_state.get("messages", []) + [
+                        HumanMessage(content=user_input)
+                    ]
+                    console.print()
+
+                # Stream the graph with real-time events
+                async def _process_stream():
+                    nonlocal current_state
+
+                    # Track state for streaming
+                    summarization_model_runs = set()  # Track model run_ids that are summarization
+                    content_buffers = {}  # Buffer content by run_id: {run_id: {"content": str, "has_tools": bool}}
+
+                    async for event in graph.astream_events(current_state, config=config, version="v2"):
+                        event_type = event.get("event", "")
+                        event_name = event.get("name", "")
+                        event_data = event.get("data", {})
+                        event_metadata = event.get("metadata", {})
+                        run_id = event.get("run_id", "")
+
+                        # Tool start event - show friendly message EVERY TIME
+                        if event_type == "on_tool_start":
+                            tool_name = event_name
+                            if tool_name:
+                                friendly_msg = TOOL_MESSAGES.get(tool_name, f"🔧 {tool_name}...")
+                                console.print(f"\n[dim]{friendly_msg}[/dim]")
+
+                        # Chat model start - detect if this is summarization
+                        elif event_type == "on_chat_model_start":
+                            input_data = event_data.get("input", {})
+                            input_str = str(input_data)
+                            if "Summarize this transport planning conversation" in input_str or "Previous Conversation Summary" in input_str:
+                                summarization_model_runs.add(run_id)
+
+                        # Chat model streaming - only stream if no tool calls
+                        elif event_type == "on_chat_model_stream":
+                            # Skip if this is a summarization model call
+                            if run_id in summarization_model_runs:
+                                continue
+
+                            chunk = event_data.get("chunk")
+                            if chunk:
+                                # Initialize tracking for this run_id if needed
+                                if run_id not in content_buffers:
+                                    content_buffers[run_id] = {"content": "", "has_tools": False, "started_printing": False}
+
+                                # Check for tool_calls in chunk
+                                if hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks:
+                                    content_buffers[run_id]["has_tools"] = True
+
+                                # Stream text content immediately ONLY if no tool calls
+                                if hasattr(chunk, "content") and chunk.content and isinstance(chunk.content, str):
+                                    if not content_buffers[run_id]["has_tools"]:
+                                        if not content_buffers[run_id]["started_printing"]:
+                                            content_buffers[run_id]["started_printing"] = True
+                                            print(f"\n{Fore.CYAN}", end="", flush=True)
+                                        print(chunk.content, end="", flush=True)
+
+                                    # Still accumulate for reference
+                                    content_buffers[run_id]["content"] += chunk.content
+
+                        # Chat model end - close streams properly
+                        elif event_type == "on_chat_model_end":
+                            if run_id in summarization_model_runs:
+                                summarization_model_runs.discard(run_id)
+                                continue
+
+                            # Finish the streamed content (add newline and reset color)
+                            if run_id in content_buffers:
+                                buffer = content_buffers[run_id]
+                                if buffer.get("started_printing"):
+                                    print(f"{Style.RESET_ALL}\n", flush=True)
+                                del content_buffers[run_id]
+
+                        # Chain end event - capture final state from graph level
+                        elif event_type == "on_chain_end":
+                            langgraph_node = event_metadata.get("langgraph_node")
+
+                            # Capture state updates from node outputs
+                            output = event_data.get("output")
+                            if isinstance(output, dict) and langgraph_node:
+                                current_state.update(output)
+
+                                # Check if interaction is complete
+                                if output.get("interaction_complete"):
+                                    pdf_path = output.get("final_pdf_path", "")
+                                    if pdf_path:
+                                        console.print(f"\n[bold green]PDF generated:[/bold green] {pdf_path}")
+                                    console.print("\n[bold green]Transport optimization complete![/bold green]")
+                                    return
+
+                # Run async stream in sync context
+                asyncio.run(_process_stream())
+
+                # Check if interaction is complete and exit the loop
+                if current_state.get("interaction_complete"):
+                    break
+
+                # Loop continues automatically if next_agent != "end"
+                # (no user input needed for agent-to-agent transitions)
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Interrupted.[/yellow]")
+                break
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+                import traceback
+                traceback.print_exc()
+
+    except ImportError as e:
+        console.print(f"[bold red]Error importing transport optimizer: {e}[/bold red]")
+        console.print("[dim]Make sure all dependencies are installed.[/dim]")
+    except Exception as e:
+        console.print(f"[bold red]Error initializing transport optimizer: {e}[/bold red]")
+        import traceback
+        traceback.print_exc()
+
+
 def main():
     """Main CLI function."""
 
@@ -192,13 +431,18 @@ def main():
     while True:
         console.print("[bold]Choose an option:[/bold]")
         console.print("1. Generate travel itinerary")
-        console.print("2. Exit")
+        console.print("2. Optimize transport route")
+        console.print("3. Exit")
 
-        option = Prompt.ask("\nOption", choices=["1", "2"], default="1")
+        option = Prompt.ask("\nOption", choices=["1", "2", "3"], default="1")
 
-        if option == "2":
+        if option == "3":
             console.print("\n[bold green]Goodbye! Have a great trip![/bold green]")
             break
+
+        elif option == "2":
+            # Transport optimizer mode
+            run_transport_optimizer()
 
         elif option == "1":
             # Generate itinerary mode

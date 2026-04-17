@@ -89,7 +89,7 @@ def plot_clusters_on_basemap(
         color = color_map.get(cluster, 'gray')
         # Draw marker
         ax.scatter(x, y, c=color, s=marker_size, edgecolors='white', linewidths=3, zorder=5)
-        # Draw number on marker
+        # Draw number on marker (sequential, data arrives pre-sorted in itinerary order)
         ax.text(x, y, str(idx + 1), fontsize=16, fontweight='bold',
                 ha='center', va='center', color='white', zorder=6)
 
