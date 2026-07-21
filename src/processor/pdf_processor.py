@@ -45,6 +45,9 @@ PDF_LABELS = {
         "cost_breakdown": "Cost Breakdown",
         "price_explanation": "Price Explanation",
         "payment_methods": "Payment Methods",
+        "tracking_apps": "Apps to Track Your Transport",
+        "platforms": "Platforms",
+        "disclaimer": "Disclaimer: routes, times and prices are estimates and may vary depending on schedules, service changes, and the time this search was made. Please confirm with official sources or the transport apps before traveling.",
         "from": "From",
         "to": "To",
         "mode": "Mode",
@@ -85,6 +88,9 @@ PDF_LABELS = {
         "cost_breakdown": "Detalhamento de Custos",
         "price_explanation": "Explicação de Preços",
         "payment_methods": "Métodos de Pagamento",
+        "tracking_apps": "Apps para Acompanhar seu Transporte",
+        "platforms": "Plataformas",
+        "disclaimer": "Aviso: as rotas, horários e preços são estimativas e podem variar conforme os horários, mudanças no serviço e o momento em que esta pesquisa foi feita. Confirme com fontes oficiais ou com os apps de transporte antes de viajar.",
         "from": "De",
         "to": "Para",
         "mode": "Modo",
@@ -125,6 +131,9 @@ PDF_LABELS = {
         "cost_breakdown": "Desglose de Costos",
         "price_explanation": "Explicación de Precios",
         "payment_methods": "Métodos de Pago",
+        "tracking_apps": "Apps para Seguir tu Transporte",
+        "platforms": "Plataformas",
+        "disclaimer": "Aviso: las rutas, horarios y precios son estimaciones y pueden variar según los horarios, cambios en el servicio y el momento en que se realizó esta búsqueda. Confirma con fuentes oficiales o con las apps de transporte antes de viajar.",
         "from": "Desde",
         "to": "Hasta",
         "mode": "Modo",
@@ -165,6 +174,9 @@ PDF_LABELS = {
         "cost_breakdown": "Détail des Coûts",
         "price_explanation": "Explication des Prix",
         "payment_methods": "Moyens de Paiement",
+        "tracking_apps": "Applis pour Suivre vos Transports",
+        "platforms": "Plateformes",
+        "disclaimer": "Avertissement : les itinéraires, horaires et prix sont des estimations et peuvent varier selon les horaires, les changements de service et le moment où cette recherche a été effectuée. Veuillez vérifier auprès des sources officielles ou des applis de transport avant de voyager.",
         "from": "De",
         "to": "À",
         "mode": "Mode",
@@ -578,6 +590,45 @@ class RoutePDFGenerator:
 
         return elements
 
+    def _create_tracking_apps_section(
+        self,
+        transport_apps: List[Dict[str, Any]],
+        labels: Dict[str, str],
+        styles: Dict[str, ParagraphStyle],
+    ) -> List:
+        """Create the transport-tracking apps section."""
+        elements = []
+
+        for app in transport_apps:
+            name = app.get("name", "")
+            description = app.get("description", "")
+            platforms = app.get("platforms", [])
+            source_links = app.get("source_links", [])
+
+            # Name header
+            elements.append(Paragraph(f"<b>{name}</b>", styles["Highlight"]))
+
+            # Description
+            if description:
+                desc_text = description.replace("\n", "<br/>")
+                elements.append(Paragraph(desc_text, styles["Body"]))
+
+            # Platforms
+            if platforms:
+                platforms_text = f"<b>{labels['platforms']}:</b> {', '.join(platforms)}"
+                elements.append(Paragraph(platforms_text, styles["Body"]))
+
+            # Source links
+            if source_links:
+                links_text = f"<b>{labels['sources']}:</b><br/>"
+                for link in source_links:
+                    links_text += f'• <a href="{link}" color="blue">{link}</a><br/>'
+                elements.append(Paragraph(links_text, styles["Body"]))
+
+            elements.append(Spacer(1, 10))
+
+        return elements
+
     def create_document(
         self,
         title: str,
@@ -585,6 +636,7 @@ class RoutePDFGenerator:
         preferences: List[Dict[str, Any]],
         route_cost_analyses: List[Dict[str, Any]],
         payment_methods_info: List[Dict[str, Any]],
+        transport_apps: List[Dict[str, Any]] = None,
         city: str = "",
         language: str = "en"
     ) -> str:
@@ -596,17 +648,21 @@ class RoutePDFGenerator:
             preferences: User's transport preferences
             route_cost_analyses: Per-route cost analysis data
             payment_methods_info: Payment methods with pros/cons
+            transport_apps: Transport-tracking apps to include
             city: City name
             language: Output language
 
         Returns:
             Path to the generated PDF
         """
+        transport_apps = transport_apps or []
+
         LOGGER.info(f"=== PDF CREATION START ===")
         LOGGER.info(f"Title: {title}")
         LOGGER.info(f"Route pairs: {len(route_pairs)}")
         LOGGER.info(f"Route cost analyses: {len(route_cost_analyses)}")
         LOGGER.info(f"Payment methods: {len(payment_methods_info)}")
+        LOGGER.info(f"Transport apps: {len(transport_apps)}")
         LOGGER.info(f"Language: {language}")
 
         labels = _get_labels(language)
@@ -646,6 +702,12 @@ class RoutePDFGenerator:
             spaceAfter=20
         ))
 
+        # Disclaimer (estimates may vary with schedules / time of search)
+        disclaimer_text = labels.get("disclaimer")
+        if disclaimer_text:
+            content.append(Paragraph(f"<i>{disclaimer_text}</i>", styles["Footer"]))
+            content.append(Spacer(1, 16))
+
         # Sort route_pairs by pair_index for consistent ordering
         route_pairs = sorted(route_pairs, key=lambda p: p.get("pair_index", 0))
 
@@ -684,7 +746,17 @@ class RoutePDFGenerator:
             content.extend(payment_elements)
             content.append(Spacer(1, 10))
 
-        # 5. Footer
+        # 5. Transport-tracking Apps Section
+        if transport_apps:
+            content.append(Paragraph(labels["tracking_apps"], styles["SectionHeader"]))
+            content.append(Spacer(1, 10))
+            apps_elements = self._create_tracking_apps_section(
+                transport_apps, labels, styles
+            )
+            content.extend(apps_elements)
+            content.append(Spacer(1, 10))
+
+        # 6. Footer
         content.append(Spacer(1, 30))
         content.append(HRFlowable(
             width="100%",

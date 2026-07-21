@@ -40,8 +40,11 @@ User (chat)
 Route Collector Agent    ← Google Places (Serper)
     │
     ▼
+Transport Overview Agent ← Web search (Serper)  · runs once, silent
+    │                       general fare/ticketing model for the city
+    ▼
 Transport Researcher     ← Google Maps Directions API
-Agent
+Agent                      (place_id routing, per-mode alternatives)
     │
     ▼
 Cost Calculator Agent    ← Web search (Serper)
@@ -71,12 +74,18 @@ PDF Builder
 ## Features — Transport Optimizer
 
 - Conversational route definition via natural chat
+- General fare-model research first: a silent overview agent researches how the city's ticketing works (single-ticket prices, fare integration across modes, transfer rules, passes, airport fares) and feeds it to the later agents
 - Multi-mode comparison: walking, transit, driving (Google Maps Directions API)
+- Up to 3 alternatives per *resolved* mode (3 train, 3 bus, 3 subway, …) — not 3 total transit, so trains aren't hidden behind buses/subways
+- `place_id`-based routing so large venues (airports, parks, stations) snap to a walkable access point instead of an internal pin
+- Representative daytime departure for transit, so scheduled daytime services (e.g. airport trains) appear even when the tool runs at night — computed offline (no timezone API call)
+- Estimated per-option prices shown during selection, taken verbatim from the overview (never invented; exact costs confirmed later)
 - Smart preference rules (e.g., "always walk if under 20 min")
-- Real pricing research with source links
+- Real pricing research with source links, applying the overview's fare-integration/transfer rules
 - Payment method analysis with pros/cons
-- Conversation summarization for long sessions (80k token threshold)
-- PDF: route table, costs, price explanations, payment methods
+- Transport-tracking apps researched for the user's context and included in the PDF
+- Conversation summarization for long sessions
+- PDF: route table, costs, price explanations, payment methods, tracking apps, and an estimate disclaimer
 
 ---
 
@@ -108,9 +117,16 @@ OPENROUTER_API_KEY=sk-or-...
 
 # Model Configuration — per-agent or global fallback
 # Browse models at: https://openrouter.ai/models
+# Itinerary Generator agents
 COORDINATE_FINDER_MODEL=anthropic/claude-sonnet-4-20250514
 DAY_ORGANIZER_MODEL=anthropic/claude-sonnet-4-20250514
 ATTRACTION_RESEARCHER_MODEL=anthropic/claude-sonnet-4-20250514
+# Transport Optimizer agents
+ROUTE_COLLECTOR_MODEL=anthropic/claude-sonnet-4-20250514
+TRANSPORT_OVERVIEW_MODEL=anthropic/claude-sonnet-4-20250514
+TRANSPORT_RESEARCHER_MODEL=anthropic/claude-sonnet-4-20250514
+COST_CALCULATOR_MODEL=anthropic/claude-sonnet-4-20250514
+# Global fallback for any agent without a specific model
 MODEL_NAME=anthropic/claude-sonnet-4-20250514
 
 # Serper API (required — Google Places + Google Search) - https://serper.dev
@@ -216,16 +232,20 @@ itinerary-generator/
 
 | Agent | Tool | Purpose |
 |-------|------|---------|
-| Route Collector | `search_place_coordinates` | Find and validate place coordinates |
+| Route Collector | `search_place_coordinates` | Find and validate place coordinates (caches a routable `place_id`) |
 | Route Collector | `register_route_pair` | Store origin→destination pair |
 | Route Collector | `confirm_route_pairs` | Finalize route list and hand off |
-| Transport Researcher | `get_transport_options` | Google Maps Directions API |
+| Transport Overview | `search_transport_information` | Research the city's general fare/ticketing model |
+| Transport Overview | `register_transport_overview` | Store the general overview (summary + sources) |
+| Transport Overview | `finish_transport_overview` | Hand off to transport researcher |
+| Transport Researcher | `get_transport_options` | Google Maps Directions API (place_id routing, per-mode alternatives, daytime departure) |
 | Transport Researcher | `register_user_preference` | Store mode selection per route |
 | Transport Researcher | `finish_transport_research` | Hand off to cost calculator |
 | Cost Calculator | `search_transport_information` | Research pricing via web search |
 | Cost Calculator | `route_reasoning` | Analyze simple vs compound routes |
 | Cost Calculator | `register_route_cost` | Store cost per route with explanation |
 | Cost Calculator | `register_payment_methods` | Store payment options with pros/cons |
+| Cost Calculator | `register_transport_apps` | Store transport-tracking apps for the PDF |
 | Cost Calculator | `finish_interaction` | Trigger PDF generation |
 
 ---

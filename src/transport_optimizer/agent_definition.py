@@ -25,11 +25,13 @@ from src.middleware import (
 from langchain.agents.middleware import SummarizationMiddleware
 from src.transport_optimizer.tools import (
     ROUTE_COLLECTOR_TOOLS,
+    TRANSPORT_OVERVIEW_TOOLS,
     TRANSPORT_RESEARCHER_TOOLS,
     COST_CALCULATOR_TOOLS,
 )
 from src.transport_optimizer.prompts import (
     ROUTE_COLLECTOR_PROMPT,
+    TRANSPORT_OVERVIEW_PROMPT,
     TRANSPORT_RESEARCHER_PROMPT,
     COST_CALCULATOR_PROMPT,
 )
@@ -133,7 +135,7 @@ def create_route_collector_agent(model_name: str = None, language: str = "en"):
         middleware=[
             SummarizationMiddleware(
                 model=_initialize_llm(model_name=os.getenv("SUMMARIZATION_MODEL") or model),
-                trigger=("tokens", 40000),
+                trigger=("tokens", 200000),
                 summary_prompt=summary_prompt,
             ),
             handoff_validator
@@ -288,6 +290,147 @@ def route_collector_node(state: TransportOptimizerState) -> Dict[str, Any]:
 
 
 # ============================================================================
+# Transport Overview Agent (silent, general cost research — runs once)
+# ============================================================================
+
+def create_transport_overview_agent(model_name: str = None, language: str = "en"):
+    """Create the transport overview agent."""
+    model = model_name or os.getenv("TRANSPORT_OVERVIEW_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
+    llm = _initialize_llm(model_name=model, temperature=0)
+
+    handoff_validator = HandoffToolValidatorMiddleware(
+        agent_type="transport_overview",
+        handoff_tools=["finish_transport_overview"]
+    )
+
+    agent = create_agent(
+        model=llm,
+        tools=TRANSPORT_OVERVIEW_TOOLS,
+        system_prompt=TRANSPORT_OVERVIEW_PROMPT.format(language=language),
+        state_schema=TransportOptimizerState,
+        middleware=[
+            SummarizationMiddleware(
+                model=_initialize_llm(model_name=os.getenv("SUMMARIZATION_MODEL") or model),
+                trigger=("tokens", 200000),
+                summary_prompt=summary_prompt,
+            ),
+            handoff_validator,
+        ],
+    )
+
+    return agent
+
+
+def transport_overview_node(state: TransportOptimizerState) -> Dict[str, Any]:
+    """Node function for the transport overview agent.
+
+    Silent research step that runs once after routes are confirmed and before
+    route research. It researches the city's general transport cost/ticketing
+    model, saves a summary (via register_transport_overview), and hands off to
+    the transport researcher (via finish_transport_overview). It never waits for
+    user input — it always auto-continues to transport_researcher.
+
+    Args:
+        state: Current graph state
+
+    Returns:
+        State updates (messages + transport_overview + next_agent)
+    """
+    LOGGER.info("=" * 60)
+    LOGGER.info("RUNNING TRANSPORT OVERVIEW AGENT")
+    LOGGER.info("=" * 60)
+
+    # If overview already done, hand off immediately (defensive)
+    if state.get("transport_overview_complete", False):
+        LOGGER.info("Transport overview already complete, handing off to transport_researcher")
+        return {"next_agent": "transport_researcher"}
+
+    messages = state.get("messages", [])
+    summary_message = state.get("summary_message", None)
+    summary_message_index = messages.index(summary_message) if summary_message in messages else 0
+    messages = messages[summary_message_index:]  # Only keep messages after summary
+    city = state.get("city", "")
+
+    model_name = os.getenv("TRANSPORT_OVERVIEW_MODEL") or os.getenv("MODEL_NAME", "anthropic/claude-sonnet-4-20250514")
+    language = state.get("language", "en")
+
+    max_retries = int(os.getenv("HANDOFF_VALIDATION_MAX_RETRIES", "3"))
+
+    try:
+        agent = create_transport_overview_agent(model_name=model_name, language=language)
+
+        # Build the conversation context
+        agent_messages = []
+        for msg in messages:
+            if isinstance(msg, (HumanMessage, AIMessage, ToolMessage)):
+                agent_messages.append(msg)
+
+        context_parts = []
+        if city:
+            context_parts.append(f"City: {city}")
+        context_parts.append(
+            "Research the general transport cost/ticketing model for this city now, "
+            "then register the overview and finish. Do not ask the user anything."
+        )
+        context_msg = "\n".join(context_parts)
+        # Drive the silent run with an explicit instruction turn
+        agent_messages.append(HumanMessage(content=f"[Context]\n{context_msg}"))
+
+        state["messages"] = agent_messages
+
+        seen_messages = []
+        final_event = {}
+
+        for retry_count in range(max_retries):
+            try:
+                for event in agent.stream(state, stream_mode="values"):
+                    for msg in event.get("messages", []):
+                        if msg not in agent_messages and msg not in seen_messages:
+                            seen_messages.append(msg)
+                            LOGGER.info(msg.pretty_repr())
+                    final_event = event
+                break
+
+            except HandoffToolValidationError as e:
+                LOGGER.warning(f"Handoff validation failed (attempt {retry_count + 1}/{max_retries}): {e}")
+                if retry_count < max_retries - 1:
+                    error_msg = HumanMessage(content=e.error_feedback_message)
+                    agent_messages = e.messages + [error_msg]
+                    state["messages"] = agent_messages
+                    LOGGER.info("Retrying with error feedback...")
+                else:
+                    # Even if the handoff wasn't validated, force progress to route research
+                    LOGGER.error("Max retries reached for transport overview handoff; forcing handoff")
+                    break
+
+        LOGGER.info("=" * 60)
+
+        state_update = {
+            "messages": final_event.get("messages", []),
+            "summary_message": final_event.get("messages", [])[0] if final_event.get("messages") else None,
+        }
+
+        # Forward the overview produced by the tools
+        for key in ["transport_overview", "transport_overview_complete"]:
+            if key in final_event and final_event[key] != state.get(key):
+                state_update[key] = final_event[key]
+                LOGGER.info(f"Forwarding state update: {key}")
+
+        # This step is silent: always continue to transport_researcher (never "end")
+        state_update["next_agent"] = "transport_researcher"
+        state_update["transport_overview_complete"] = True
+        return state_update
+
+    except Exception as e:
+        LOGGER.error(f"Error in transport_overview_node: {e}")
+        # Don't block the pipeline on overview failure — continue to route research
+        return {
+            "next_agent": "transport_researcher",
+            "transport_overview_complete": True,
+        }
+
+
+# ============================================================================
 # Transport Researcher Agent
 # ============================================================================
 
@@ -309,7 +452,7 @@ def create_transport_researcher_agent(model_name: str = None, language: str = "e
         middleware=[
             SummarizationMiddleware(
                 model=_initialize_llm(model_name=os.getenv("SUMMARIZATION_MODEL") or model),
-                trigger=("tokens", 40000),
+                trigger=("tokens", 200000),
                 summary_prompt=summary_prompt,
             ),
         ],
@@ -378,6 +521,14 @@ def transport_researcher_node(state: TransportOptimizerState) -> Dict[str, Any]:
 
         # Add minimal context (only essential non-inferable state)
         context_parts = []
+
+        # General transport overview (for estimated per-option pricing)
+        transport_overview = state.get("transport_overview", {})
+        if transport_overview and transport_overview.get("summary"):
+            context_parts.append(
+                "General transport overview (use it to show estimated prices per option):\n"
+                f"{transport_overview['summary']}"
+            )
 
         # Show current progress (0-based indexing)
         context_parts.append(f"Currently processing pair {current_pair_index} of {len(route_pairs)} (0-indexed, so pairs are 0 to {len(route_pairs) - 1})")
@@ -494,7 +645,7 @@ def create_cost_calculator_agent(model_name: str = None, language: str = "en"):
         middleware=[
             SummarizationMiddleware(
                 model=_initialize_llm(model_name=os.getenv("SUMMARIZATION_MODEL") or model),
-                trigger=("tokens", 40000),
+                trigger=("tokens", 200000),
                 summary_prompt=summary_prompt,
             ),
             handoff_validator
@@ -537,6 +688,8 @@ def cost_calculator_node(state: TransportOptimizerState) -> Dict[str, Any]:
     transport_options = state.get("transport_options", {})
     route_cost_analyses = state.get("route_cost_analyses", [])
     payment_methods_info = state.get("payment_methods_info", [])
+    transport_apps = state.get("transport_apps", [])
+    transport_overview = state.get("transport_overview", {})
     city = state.get("city", "")
     interaction_complete = state.get("interaction_complete", False)
 
@@ -578,6 +731,13 @@ def cost_calculator_node(state: TransportOptimizerState) -> Dict[str, Any]:
         # City
         if city:
             context_parts.append(f"City: {city}")
+
+        # General transport overview (apply its fare-integration / transfer rules)
+        if transport_overview and transport_overview.get("summary"):
+            context_parts.append(
+                "General transport overview (apply its fare-integration and transfer rules):\n"
+                f"{transport_overview['summary']}"
+            )
 
         # Per-route details for each paid route
         if paid_preferences:
@@ -626,6 +786,12 @@ def cost_calculator_node(state: TransportOptimizerState) -> Dict[str, Any]:
             for pm in payment_methods_info:
                 context_parts.append(f"  - {pm['name']}")
 
+        # Already-registered transport-tracking apps (for resume)
+        if transport_apps:
+            context_parts.append("Transport-tracking apps already registered:")
+            for app in transport_apps:
+                context_parts.append(f"  - {app['name']}")
+
         context_msg = "\n".join(context_parts)
         agent_messages.append(SystemMessage(content=f"[Context]\n{context_msg}"))
 
@@ -673,8 +839,8 @@ def cost_calculator_node(state: TransportOptimizerState) -> Dict[str, Any]:
         state_update = {"messages": final_event.get("messages", []), "summary_message": final_event.get("messages", [])[0] if final_event.get("messages") else None}
 
         # Forward state updates from tools via Command
-        # Cost calculator tools can update: route_cost_analyses, payment_methods_info, final_pdf_path, interaction_complete
-        for key in ["route_cost_analyses", "payment_methods_info", "final_pdf_path", "interaction_complete"]:
+        # Cost calculator tools can update: route_cost_analyses, payment_methods_info, transport_apps, final_pdf_path, interaction_complete
+        for key in ["route_cost_analyses", "payment_methods_info", "transport_apps", "final_pdf_path", "interaction_complete"]:
             if key in final_event and final_event[key] != state.get(key):
                 state_update[key] = final_event[key]
                 LOGGER.info(f"Forwarding state update: {key}")
@@ -724,6 +890,7 @@ def pdf_generator_node(state: TransportOptimizerState) -> Dict[str, Any]:
     user_preferences = state.get("user_preferences", [])
     route_cost_analyses = state.get("route_cost_analyses", [])
     payment_methods_info = state.get("payment_methods_info", [])
+    transport_apps = state.get("transport_apps", [])
     city = state.get("city", "")
     language = state.get("language", "en")
 
@@ -739,6 +906,7 @@ def pdf_generator_node(state: TransportOptimizerState) -> Dict[str, Any]:
             preferences=user_preferences,
             route_cost_analyses=route_cost_analyses,
             payment_methods_info=payment_methods_info,
+            transport_apps=transport_apps,
             city=city,
             language=language,
         )
@@ -768,6 +936,8 @@ def pdf_generator_node(state: TransportOptimizerState) -> Dict[str, Any]:
 __all__ = [
     "create_route_collector_agent",
     "route_collector_node",
+    "create_transport_overview_agent",
+    "transport_overview_node",
     "create_transport_researcher_agent",
     "transport_researcher_node",
     "create_cost_calculator_agent",

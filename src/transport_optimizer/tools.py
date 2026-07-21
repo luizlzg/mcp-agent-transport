@@ -15,12 +15,77 @@ from langchain_community.utilities import GoogleSerperAPIWrapper
 from langgraph.types import Command
 
 from src.utils.logger import LOGGER
+from src.transport_optimizer.state import TransportApp
 
 
 # ============================================================================
 # Google Maps API Tools (Read-only, return JSON strings)
 # ============================================================================
-    
+
+
+def _reverse_geocode_place_id(lat: float, lon: float) -> Optional[str]:
+    """Resolve a Google place_id for a coordinate via reverse geocoding.
+
+    Routing by place_id instead of a raw lat/lon lets Google snap to a proper,
+    walkable access point for large venues (airports, big parks, stations),
+    whose exact pin can be pedestrian-inaccessible and otherwise produces a huge
+    phantom access/egress walking leg in transit results. Best-effort: returns
+    None on any failure so callers fall back to the raw coordinate.
+    """
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        response = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"latlng": f"{lat},{lon}", "key": api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        return data["results"][0].get("place_id")
+    except Exception as e:
+        LOGGER.warning(f"Reverse geocode failed for ({lat}, {lon}): {e}")
+        return None
+
+
+def _representative_departure_epoch(lat: float, lon: float) -> int:
+    """Pick a departure epoch (UTC) for transit queries that lands in daytime.
+
+    Transit durations/availability depend on departure_time: querying at the
+    current instant can fall outside service hours (e.g. late night, when airport
+    trains don't run), so daytime services like regional trains don't appear. We
+    keep 'now' when it is already daytime at the location, otherwise we shift to
+    the next representative daytime hour in local time.
+
+    The local-time offset is approximated purely from longitude (15 deg per hour)
+    — no API call, no extra dependency. It can be off by ~1-2h vs the political
+    timezone (DST, tz borders), but that is well within transit service windows,
+    so it reliably tells day from night and picks a daytime hour.
+    """
+    import time as _time
+    now = int(_time.time())
+
+    # Offset from longitude: 15 degrees of longitude ~= 1 hour.
+    offset = int(round(lon / 15.0)) * 3600
+
+    DAY_START, DAY_END, TARGET_HOUR = 8, 21, 9  # local hours
+    local = now + offset
+    seconds_into_day = local % 86400
+    local_hour = seconds_into_day // 3600
+
+    if DAY_START <= local_hour < DAY_END:
+        return now  # already daytime -> use real-time results
+
+    # Shift to the next TARGET_HOUR:00 local time
+    delta = TARGET_HOUR * 3600 - seconds_into_day
+    if delta <= 0:
+        delta += 86400
+    return now + delta
+
+
 @tool
 def search_place_coordinates(
     query: str,
@@ -94,6 +159,10 @@ def search_place_coordinates(
 
         LOGGER.info(f"Found coordinates for '{query}': ({latitude}, {longitude})")
 
+        # Resolve a routable place_id for these coordinates (used later for
+        # directions so large venues snap to a walkable access point).
+        place_id = _reverse_geocode_place_id(latitude, longitude)
+
         # Build result with place info
         result = {
             "query": query,
@@ -116,6 +185,7 @@ def search_place_coordinates(
                     query: {
                         "lat": latitude,
                         "lon": longitude,
+                        "place_id": place_id,
                         "address": best_place.get("address", ""),
                         "title": best_place.get("title", ""),
                     }
@@ -182,15 +252,29 @@ def get_transport_options(
             "error": "GOOGLE_MAPS_API_KEY not configured"
         }, ensure_ascii=False)
 
-    start_lat, start_lon = start_coords["lat"], start_coords["lon"]
-    end_lat, end_lon = end_coords["lat"], end_coords["lon"]
-    origin = f"{start_lat},{start_lon}"
-    destination = f"{end_lat},{end_lon}"
+    # Route by the cached place_id rather than the raw Serper coordinate.
+    # Serper's pin for large venues (airports, big parks, stations) can land at an
+    # internal, non-walkable point. Google's transit duration includes the walk to
+    # that exact coordinate, so it appends a huge access/egress walking leg,
+    # inflating the total (e.g. Roma Trastevere -> Fiumicino: 33 min by place_id vs
+    # 236 min by coordinate, a 203-min phantom walk). A place_id lets Google snap
+    # to a sensible access point while keeping the exact place Serper resolved
+    # (unlike routing by name, which can geocode to a different same-named place).
+    # Fall back to the raw coordinate if no place_id was cached.
+    start_pid = start_coords.get("place_id")
+    end_pid = end_coords.get("place_id")
+    origin = f"place_id:{start_pid}" if start_pid else f"{start_coords['lat']},{start_coords['lon']}"
+    destination = f"place_id:{end_pid}" if end_pid else f"{end_coords['lat']},{end_coords['lon']}"
 
     LOGGER.info(f"Getting transport options from {start_place} to {end_place}")
 
     modes_to_check = ["walking", "transit", "driving"]
     options = []
+    # Cap results per RESOLVED mode label (e.g. up to 3 train, 3 bus, 3 subway,
+    # 3 walking, 3 driving) — NOT 3 total transit. Otherwise trains get hidden
+    # behind subway/bus alternatives that Google returns first under mode=transit.
+    MAX_PER_MODE = 3
+    mode_counts: Dict[str, int] = {}
 
     for mode in modes_to_check:
         try:
@@ -203,10 +287,13 @@ def get_transport_options(
                 "alternatives": "true"
             }
 
-            # For transit, request departure time to get real-time info
+            # For transit, use a representative daytime departure so scheduled
+            # daytime services (e.g. regional trains) appear even when the tool
+            # runs at night. Keeps real-time "now" when it's already daytime.
             if mode == "transit":
-                import time
-                params["departure_time"] = int(time.time())
+                params["departure_time"] = _representative_departure_epoch(
+                    start_coords["lat"], start_coords["lon"]
+                )
 
             response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
@@ -216,7 +303,7 @@ def get_transport_options(
                 LOGGER.warning(f"No {mode} route found")
                 continue
 
-            for route in data["routes"][:2]:  # Max 2 alternatives per mode
+            for route in data["routes"]:  # iterate all alternatives; capped per resolved mode below
                 leg = route["legs"][0]
 
                 # Extract duration and distance
@@ -272,6 +359,10 @@ def get_transport_options(
                     mode_label = mode
                     details = f"{mode.capitalize()} route"
 
+                # Enforce the cap on the RESOLVED mode label (3 train, 3 bus, ...)
+                if mode_counts.get(mode_label, 0) >= MAX_PER_MODE:
+                    continue
+
                 option = {
                     "mode": mode_label,
                     "duration_minutes": duration_minutes,
@@ -286,6 +377,7 @@ def get_transport_options(
                     option["details"] = f"Drive via {leg.get('summary', 'main roads')}"
 
                 options.append(option)
+                mode_counts[mode_label] = mode_counts.get(mode_label, 0) + 1
 
         except Exception as e:
             LOGGER.error(f"Error getting {mode} directions: {e}")
@@ -449,10 +541,10 @@ def register_route_pair(
 def confirm_route_pairs(
     runtime: ToolRuntime,
 ) -> Command:
-    """Confirm all route pairs are complete and hand off to transport researcher.
+    """Confirm all route pairs are complete and hand off to the transport overview research.
 
     Use this tool when the user has confirmed all their route pairs.
-    This will transition to the transport researcher agent.
+    This will transition to the transport overview agent (general cost research).
 
     Returns:
         Command that confirms pairs and hands off to next agent
@@ -473,7 +565,7 @@ def confirm_route_pairs(
 
     return Command(update={
         "pairs_confirmed": True,
-        "next_agent": "transport_researcher",
+        "next_agent": "transport_overview",
         "current_pair_index": 0,
         "messages": [ToolMessage(
             tool_call_id=runtime.tool_call_id,
@@ -481,6 +573,96 @@ def confirm_route_pairs(
                 "success": True,
                 "message": f"All {len(route_pairs)} pairs confirmed. Moving to transport research.",
                 "pairs_count": len(route_pairs)
+            }, ensure_ascii=False, indent=2)
+        )]
+    })
+
+
+@tool
+def register_transport_overview(
+    summary: str,
+    source_links: List[str],
+    runtime: ToolRuntime,
+) -> Command:
+    """Register the general transport overview for the city.
+
+    Save a single free-text summary covering how transport costs and ticketing
+    work in the city (ticket prices, fare integration between modes, transfer
+    rules, day/week passes, payment methods) along with the source URLs.
+
+    Args:
+        summary: Free-text general overview of the city's transport costs/ticketing
+        source_links: List of URLs where the information was found
+
+    Returns:
+        Command that saves the overview and marks it complete
+    """
+    if not summary.strip():
+        return Command(update={
+            "messages": [ToolMessage(
+                tool_call_id=runtime.tool_call_id,
+                content=json.dumps({
+                    "success": False,
+                    "error": "The 'summary' cannot be empty. Research first, then provide a summary."
+                }, ensure_ascii=False)
+            )]
+        })
+
+    overview = {
+        "summary": summary,
+        "source_links": source_links or [],
+    }
+
+    LOGGER.info(f"Registered transport overview ({len(summary)} chars, {len(overview['source_links'])} sources)")
+
+    return Command(update={
+        "transport_overview": overview,
+        "transport_overview_complete": True,
+        "messages": [ToolMessage(
+            tool_call_id=runtime.tool_call_id,
+            content=json.dumps({
+                "success": True,
+                "message": "Transport overview registered.",
+                "overview": overview
+            }, ensure_ascii=False, indent=2)
+        )]
+    })
+
+
+@tool
+def finish_transport_overview(
+    runtime: ToolRuntime,
+) -> Command:
+    """Finish the general transport overview and hand off to the route researcher.
+
+    Use this tool after registering the transport overview. This transitions to
+    the transport researcher agent.
+
+    Returns:
+        Command that hands off to transport_researcher
+    """
+    overview = runtime.state.get("transport_overview", {})
+
+    if not overview or not overview.get("summary"):
+        return Command(update={
+            "messages": [ToolMessage(
+                tool_call_id=runtime.tool_call_id,
+                content=json.dumps({
+                    "error": "No transport overview registered yet. Call register_transport_overview first."
+                }, ensure_ascii=False)
+            )]
+        })
+
+    LOGGER.info("Transport overview finished, handing off to transport_researcher")
+
+    return Command(update={
+        "transport_overview_complete": True,
+        "next_agent": "transport_researcher",
+        "messages": [ToolMessage(
+            tool_call_id=runtime.tool_call_id,
+            content=json.dumps({
+                "success": True,
+                "message": "Transport overview complete. Moving to route research."
             }, ensure_ascii=False, indent=2)
         )]
     })
@@ -855,13 +1037,47 @@ def register_payment_methods(
 
 
 @tool
+def register_transport_apps(
+    apps: List[TransportApp],
+    runtime: ToolRuntime,
+) -> Command:
+    """Register all transport-tracking apps at once.
+
+    After researching apps the traveler can use to plan and track transport in the
+    city (journey planners, live-tracking apps), use this tool to save all of them.
+
+    Args:
+        apps: List of transport apps. Each app has:
+            - name: App name
+            - description: What it does and how it helps the traveler
+            - platforms: List of platforms (e.g., ["iOS", "Android", "Web"])
+            - source_links: List of official/store URLs
+    """
+    apps_info = list(apps)
+
+    LOGGER.info(f"Registered {len(apps_info)} transport-tracking apps")
+
+    return Command(update={
+        "transport_apps": apps_info,  # Replaces entire list (last_value reducer)
+        "messages": [ToolMessage(
+            tool_call_id=runtime.tool_call_id,
+            content=json.dumps({
+                "success": True,
+                "message": f"Registered {len(apps_info)} transport-tracking apps.",
+                "transport_apps": apps_info
+            }, ensure_ascii=False, indent=2)
+        )]
+    })
+
+
+@tool
 def finish_interaction(
     runtime: ToolRuntime,
 ) -> Command:
     """Finish the cost calculator interaction and trigger PDF generation.
 
-    Use this tool after you have registered all route costs and payment methods,
-    and the user is satisfied. This will trigger the PDF generation node.
+    Use this tool after you have registered all route costs, payment methods and
+    transport-tracking apps, and the user is satisfied. This triggers PDF generation.
 
     Returns:
         Command that triggers pdf_generator node
@@ -870,6 +1086,7 @@ def finish_interaction(
     route_pairs = runtime.state.get("route_pairs", [])
     route_cost_analyses = runtime.state.get("route_cost_analyses", [])
     payment_methods_info = runtime.state.get("payment_methods_info", [])
+    transport_apps = runtime.state.get("transport_apps", [])
 
     total_pairs = len(route_pairs)
     registered_indices = {a["pair_index"] for a in route_cost_analyses}
@@ -902,6 +1119,18 @@ def finish_interaction(
             )]
         })
 
+    if not transport_apps:
+        return Command(update={
+            "messages": [ToolMessage(
+                tool_call_id=runtime.tool_call_id,
+                content=json.dumps({
+                    "success": False,
+                    "error": "Cannot finish: no transport-tracking apps registered. "
+                             "You must call register_transport_apps before finishing."
+                }, ensure_ascii=False)
+            )]
+        })
+
     # Handoff to PDF generator
     LOGGER.info("Finishing cost calculator, handing off to pdf_generator")
 
@@ -927,6 +1156,12 @@ ROUTE_COLLECTOR_TOOLS = [
     confirm_route_pairs,
 ]
 
+TRANSPORT_OVERVIEW_TOOLS = [
+    search_transport_information,
+    register_transport_overview,
+    finish_transport_overview,
+]
+
 TRANSPORT_RESEARCHER_TOOLS = [
     get_transport_options,
     register_user_preference,
@@ -938,5 +1173,6 @@ COST_CALCULATOR_TOOLS = [
     route_reasoning,
     register_route_cost,
     register_payment_methods,
+    register_transport_apps,
     finish_interaction,
 ]

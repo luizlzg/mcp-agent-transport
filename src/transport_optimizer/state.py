@@ -36,6 +36,15 @@ def upsert_by_pair_index(existing: list, new: list) -> list:
 # TypedDict Models for Route Data
 # ============================================================================
 
+class PlaceCoordinates(TypedDict):
+    """Cached place lookup: coordinates plus a routable Google place_id."""
+    lat: float
+    lon: float
+    place_id: Optional[str]    # Google place_id for directions (None if unresolved)
+    address: str               # Formatted address from Serper Places
+    title: str                 # Place display title from Serper Places
+
+
 class RoutePair(TypedDict):
     """A single route segment from A to B."""
     pair_index: int            # Index of this pair (for ordering)
@@ -104,6 +113,25 @@ class PaymentMethodInfo(TypedDict):
     source_links: List[str]            # Source URLs
 
 
+class TransportOverview(TypedDict):
+    """General overview of how transport costs/ticketing work in the city.
+
+    Researched once (transport_overview agent) before route research. All the
+    specifics (prices, fare integration, transfer rules, passes) live in the
+    free-text summary — kept intentionally minimal.
+    """
+    summary: str                       # Free-text general overview
+    source_links: List[str]            # Source URLs
+
+
+class TransportApp(TypedDict):
+    """A transport-tracking app the traveler can use (e.g. journey planners)."""
+    name: str                          # App name
+    description: str                   # What it does / how it helps
+    platforms: List[str]               # e.g. ["iOS", "Android", "Web"]
+    source_links: List[str]            # Official/store URLs
+
+
 # ============================================================================
 # Graph State
 # ============================================================================
@@ -137,11 +165,20 @@ class TransportOptimizerState(AgentState):
     pairs_confirmed: bool
 
     # -------------------------------------------------------------------------
+    # Transport Overview (general city ticketing/cost research, runs once)
+    # -------------------------------------------------------------------------
+    # General overview of how transport costs work in the city (summary + links)
+    transport_overview: TransportOverview
+
+    # Whether the general overview research is complete
+    transport_overview_complete: bool
+
+    # -------------------------------------------------------------------------
     # Coordinates Cache (shared between agents)
     # -------------------------------------------------------------------------
     # Coordinates by place name (populated by search_place_coordinates)
-    # Key: normalized place name, Value: {lat, lon, address, title}
-    place_coordinates: Annotated[Dict[str, Dict[str, float]], operator.or_]
+    # Key: normalized place name, Value: PlaceCoordinates (lat, lon, place_id, address, title)
+    place_coordinates: Annotated[Dict[str, PlaceCoordinates], operator.or_]
 
     # -------------------------------------------------------------------------
     # Transport Researcher Outputs
@@ -167,6 +204,9 @@ class TransportOptimizerState(AgentState):
 
     # Payment methods info (set once in bulk by register_payment_methods)
     payment_methods_info: Annotated[List[PaymentMethodInfo], last_value]
+
+    # Transport-tracking apps (set once in bulk by register_transport_apps)
+    transport_apps: Annotated[List[TransportApp], last_value]
 
     # Path to generated PDF
     final_pdf_path: str

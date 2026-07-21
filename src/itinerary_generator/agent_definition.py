@@ -661,18 +661,29 @@ Remember to:
             state["messages"] = messages
 
         except Exception as e:
-            LOGGER.error(f"{log_prefix} | ❌ Unexpected error: {e}", exc_info=True)
-            # Return minimal fallback
-            return {"processed_attractions": [
-                {
-                    "name": a,
-                    "day_number": day_number,
-                    "description": "",
-                    "images": [],
-                    "ticket_info": [],
-                    "useful_links": [],
-                    "estimated_cost": 0.0,
-                    "currency": "EUR",
-                }
-                for a in attractions
-            ]}
+            retry_count += 1
+
+            # Transient/provider errors (e.g. a truncated tool call surfacing as an
+            # OpenRouter 400 parse error) are retryable — don't silently degrade to
+            # empty attractions on the first hit. Only fall back after exhausting retries.
+            LOGGER.error(f"{log_prefix} | ❌ Unexpected error (attempt {retry_count}/{max_retries + 1}): {e}", exc_info=True)
+
+            if retry_count > max_retries:
+                LOGGER.error(f"{log_prefix} | Giving up after {retry_count} attempts, returning fallback")
+                # Return minimal fallback
+                return {"processed_attractions": [
+                    {
+                        "name": a,
+                        "day_number": day_number,
+                        "description": "",
+                        "images": [],
+                        "ticket_info": [],
+                        "useful_links": [],
+                        "estimated_cost": 0.0,
+                        "currency": "EUR",
+                    }
+                    for a in attractions
+                ]}
+
+            # Keep the current state/messages as-is and retry the request.
+            LOGGER.warning(f"{log_prefix} | Retrying after unexpected error")
