@@ -7,6 +7,7 @@ from src.utils.logger import LOGGER
 from src.transport_optimizer.state import TransportOptimizerState
 from src.transport_optimizer.agent_definition import (
     route_collector_node,
+    transport_overview_node,
     transport_researcher_node,
     cost_calculator_node,
     pdf_generator_node,
@@ -41,7 +42,12 @@ def determine_entry_point(state: TransportOptimizerState) -> str:
         LOGGER.info("Entry: all preferences collected, starting at cost_calculator")
         return "cost_calculator"
 
-    # If pairs confirmed but not all preferences, go to transport researcher
+    # If pairs confirmed but the general overview hasn't been researched, do that first
+    if state.get("pairs_confirmed", False) and not state.get("transport_overview_complete", False):
+        LOGGER.info("Entry: pairs confirmed, overview pending, starting at transport_overview")
+        return "transport_overview"
+
+    # If pairs confirmed (and overview done) but not all preferences, go to transport researcher
     if state.get("pairs_confirmed", False):
         LOGGER.info("Entry: pairs confirmed, starting at transport_researcher")
         return "transport_researcher"
@@ -68,7 +74,7 @@ def route_based_on_state(state: TransportOptimizerState) -> str:
 
     if next_agent == "end":
         return END
-    elif next_agent in ["route_collector", "transport_researcher", "cost_calculator", "pdf_generator"]:
+    elif next_agent in ["route_collector", "transport_overview", "transport_researcher", "cost_calculator", "pdf_generator"]:
         return next_agent
     else:
         # Default to route_collector if unknown
@@ -113,6 +119,7 @@ def build_transport_optimizer_graph(checkpointer=None) -> StateGraph:
 
     # Add nodes for each agent
     workflow.add_node("route_collector", route_collector_node)
+    workflow.add_node("transport_overview", transport_overview_node)
     workflow.add_node("transport_researcher", transport_researcher_node)
     workflow.add_node("cost_calculator", cost_calculator_node)
     workflow.add_node("pdf_generator", pdf_generator_node)
@@ -122,6 +129,7 @@ def build_transport_optimizer_graph(checkpointer=None) -> StateGraph:
         determine_entry_point,
         {
             "route_collector": "route_collector",
+            "transport_overview": "transport_overview",
             "transport_researcher": "transport_researcher",
             "cost_calculator": "cost_calculator",
             "pdf_generator": "pdf_generator",
@@ -138,6 +146,21 @@ def build_transport_optimizer_graph(checkpointer=None) -> StateGraph:
         route_based_on_state,
         {
             "route_collector": "route_collector",
+            "transport_overview": "transport_overview",
+            "transport_researcher": "transport_researcher",
+            "cost_calculator": "cost_calculator",
+            "pdf_generator": "pdf_generator",
+            END: END,
+        }
+    )
+
+    # From transport_overview: silent step, always continues to transport_researcher
+    workflow.add_conditional_edges(
+        "transport_overview",
+        route_based_on_state,
+        {
+            "route_collector": "route_collector",
+            "transport_overview": "transport_overview",
             "transport_researcher": "transport_researcher",
             "cost_calculator": "cost_calculator",
             "pdf_generator": "pdf_generator",
@@ -151,6 +174,7 @@ def build_transport_optimizer_graph(checkpointer=None) -> StateGraph:
         route_based_on_state,
         {
             "route_collector": "route_collector",
+            "transport_overview": "transport_overview",
             "transport_researcher": "transport_researcher",
             "cost_calculator": "cost_calculator",
             "pdf_generator": "pdf_generator",
@@ -164,6 +188,7 @@ def build_transport_optimizer_graph(checkpointer=None) -> StateGraph:
         route_based_on_state,
         {
             "route_collector": "route_collector",
+            "transport_overview": "transport_overview",
             "transport_researcher": "transport_researcher",
             "cost_calculator": "cost_calculator",
             "pdf_generator": "pdf_generator",
@@ -199,6 +224,8 @@ def get_initial_state(language: str = "en") -> TransportOptimizerState:
         "starting_point": "",
         "route_pairs": [],
         "pairs_confirmed": False,
+        "transport_overview": {},
+        "transport_overview_complete": False,
         "place_coordinates": {},  # Cached coordinates by place name
         "transport_options": {},
         "user_preferences": [],
@@ -207,6 +234,7 @@ def get_initial_state(language: str = "en") -> TransportOptimizerState:
         "paid_routes": [],
         "route_cost_analyses": [],
         "payment_methods_info": [],
+        "transport_apps": [],
         "final_pdf_path": "",
         "language": language,
         "interaction_complete": False,

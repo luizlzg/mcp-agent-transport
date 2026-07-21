@@ -130,7 +130,7 @@ The completed PDF can optionally be delivered via email using SMTP or Gmail.
 - All image URLs verified accessible before inclusion
 - All ticket links verified as official and working
 - Every attraction validated to be researched — coverage check prevents omissions
-- Structured output schema enforcement with up to 3 automatic retries per agent
+- Structured output schema enforcement with automatic retries per agent — covering both validation failures and transient provider errors (e.g. a truncated tool call), so a one-off failure retries instead of silently degrading to empty results
 - Workflow integrity validation — agents must complete all required steps before proceeding
 
 ---

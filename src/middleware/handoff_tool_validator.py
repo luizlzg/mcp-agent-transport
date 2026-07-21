@@ -101,6 +101,17 @@ Before transitioning, you MUST:
 
 Please call 'confirm_route_pairs' to properly complete this phase.
 """
+        elif self.agent_type == "transport_overview":
+            return """
+ATTENTION: You are trying to hand off to route research without completing the transport overview.
+
+Before transitioning, you MUST:
+1. Research the city's general transport cost/ticketing model
+2. Call 'register_transport_overview' with your summary and source links
+3. Call 'finish_transport_overview' to complete this phase
+
+Please call 'finish_transport_overview' to properly complete this phase.
+"""
         elif self.agent_type == "transport_researcher":
             return """
 ATTENTION: You are trying to hand off to the cost calculator without finishing transport research.

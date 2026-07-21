@@ -50,6 +50,8 @@ TOOL_MESSAGES = {
     "search_place_coordinates": "📍 Searching for location...",
     "register_route_pair": "✅ Registering route...",
     "confirm_route_pairs": "📋 Confirming routes...",
+    "register_transport_overview": "🗺️ Saving transport overview...",
+    "finish_transport_overview": "✨ Finishing transport overview...",
     "get_transport_options": "🚇 Checking transport options...",
     "register_user_preference": "💾 Saving your preference...",
     "finish_transport_research": "✨ Finishing transport research...",
@@ -57,6 +59,7 @@ TOOL_MESSAGES = {
     "route_reasoning": "🤔 Analyzing route...",
     "register_route_cost": "💰 Registering cost...",
     "register_payment_methods": "💳 Saving payment methods...",
+    "register_transport_apps": "📱 Saving transport apps...",
     "finish_interaction": "📄 Generating PDF...",
 }
 
