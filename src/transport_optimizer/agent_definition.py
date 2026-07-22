@@ -739,13 +739,16 @@ def cost_calculator_node(state: TransportOptimizerState) -> Dict[str, Any]:
                 f"{transport_overview['summary']}"
             )
 
-        # Per-route details for each paid route
+        # Per-route details for each paid route.
+        # Look up pairs BY pair_index (not by list position) so a route's start/end
+        # is never mismatched with its preference/cost, regardless of list order.
+        pairs_by_index = {p["pair_index"]: p for p in route_pairs}
         if paid_preferences:
             context_parts.append("Paid routes to research:")
             for pref in paid_preferences:
                 pair_idx = pref.get("pair_index", 0)
-                if pair_idx < len(route_pairs):
-                    pair = route_pairs[pair_idx]
+                pair = pairs_by_index.get(pair_idx)
+                if pair is not None:
                     details = pref.get("transport_details", {})
                     mode = pref.get("selected_mode", "")
                     duration = details.get("duration_minutes", "?")

@@ -15,6 +15,18 @@ def operator_add_without_duplicates(list1: List[Any], list2: List[Any]) -> List[
     return list1
 
 
+def add_route_pairs_by_index(list1: List[Any], list2: List[Any]) -> List[Any]:
+    """Append route pairs without duplicates, then keep them ordered by pair_index.
+
+    Route pairs are registered by parallel tool calls, so they can merge into the
+    list out of order. Downstream code and the PDF read them by pair_index, so we
+    keep the list canonically sorted by pair_index to avoid position/index drift
+    (which otherwise mismatches a route's start/end with its cost/explanation).
+    """
+    merged = operator_add_without_duplicates(list1, list2)
+    return sorted(merged, key=lambda p: p.get("pair_index", 0))
+
+
 def last_value(existing: list, new: list) -> list:
     """Reducer that replaces the list entirely with the new value (last writer wins)."""
     return new
@@ -158,8 +170,9 @@ class TransportOptimizerState(AgentState):
     starting_point: str
 
     # List of route pairs collected from user
-    # Uses operator_add_without_duplicates to accumulate pairs registered via register_route_pair tool
-    route_pairs: Annotated[List[RoutePair], operator_add_without_duplicates]
+    # Kept sorted by pair_index so list position always matches pair_index
+    # (parallel register_route_pair calls can otherwise merge out of order).
+    route_pairs: Annotated[List[RoutePair], add_route_pairs_by_index]
 
     # Whether user has confirmed all pairs are complete
     pairs_confirmed: bool
